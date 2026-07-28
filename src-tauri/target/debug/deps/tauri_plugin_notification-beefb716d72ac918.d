@@ -1,0 +1,10 @@
+/home/dt/github/polyVocal/src-tauri/target/debug/deps/tauri_plugin_notification-beefb716d72ac918.d: /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/lib.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/desktop.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/commands.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/error.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/models.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/init-iife.js
+
+/home/dt/github/polyVocal/src-tauri/target/debug/deps/libtauri_plugin_notification-beefb716d72ac918.rmeta: /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/lib.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/desktop.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/commands.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/error.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/models.rs /home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/init-iife.js
+
+/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/lib.rs:
+/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/desktop.rs:
+/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/commands.rs:
+/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/error.rs:
+/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/models.rs:
+/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/init-iife.js:

@@ -1,0 +1,726 @@
+   0.302755817s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal_lib"}: cargo::core::compiler::fingerprint: stale: missing "/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/reqwest-d7c137ccf5b6eebd/dep-lib-reqwest"
+   0.314672567s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal_lib"}: cargo::core::compiler::fingerprint: fingerprint error for polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri)/Check { test: false }/TargetInner { ..: lib_target("polyvocal_lib", ["staticlib", "cdylib", "rlib"], "/home/dt/github/polyVocal/src-tauri/src/lib.rs", Edition2021) }
+   0.314696452s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal_lib"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/polyvocal-6083baa068999811/lib-polyvocal_lib`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_main
+  18: <unknown>
+   0.318473542s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="build-script-build"}: cargo::core::compiler::fingerprint: fingerprint error for polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri)/RunCustomBuild/TargetInner { ..: custom_build_target("build-script-build", "/home/dt/github/polyVocal/src-tauri/build.rs", Edition2021) }
+   0.318487371s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="build-script-build"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/polyvocal-ea48ce4364c777c7/run-build-script-build-script-build`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: __libc_start_main
+  21: <unknown>
+   0.326689539s  INFO prepare_target{force=false package_id=reqwest v0.11.27 target="reqwest"}: cargo::core::compiler::fingerprint: fingerprint error for reqwest v0.11.27/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("reqwest", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.11.27/src/lib.rs", Edition2021) }
+   0.326714751s  INFO prepare_target{force=false package_id=reqwest v0.11.27 target="reqwest"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/reqwest-d7c137ccf5b6eebd/lib-reqwest`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: __libc_start_main
+  19: <unknown>
+   0.338677527s  INFO prepare_target{force=false package_id=tauri v2.11.5 target="tauri"}: cargo::core::compiler::fingerprint: fingerprint error for tauri v2.11.5/Check { test: false }/TargetInner { ..: lib_target("tauri", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.5/src/lib.rs", Edition2021) }
+   0.338697501s  INFO prepare_target{force=false package_id=tauri v2.11.5 target="tauri"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/tauri-050fa6947fc7d66d/lib-tauri`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: __libc_start_main
+  19: <unknown>
+   0.340593834s  INFO prepare_target{force=false package_id=gtk v0.18.2 target="gtk"}: cargo::core::compiler::fingerprint: fingerprint error for gtk v0.18.2/Check { test: false }/TargetInner { ..: lib_target("gtk", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gtk-0.18.2/src/lib.rs", Edition2021) }
+   0.340609129s  INFO prepare_target{force=false package_id=gtk v0.18.2 target="gtk"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/gtk-8ec8b84c63eb7651/lib-gtk`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: __libc_start_main
+  20: <unknown>
+   0.343245151s  INFO prepare_target{force=false package_id=gdk v0.18.2 target="gdk"}: cargo::core::compiler::fingerprint: fingerprint error for gdk v0.18.2/Check { test: false }/TargetInner { ..: lib_target("gdk", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gdk-0.18.2/src/lib.rs", Edition2021) }
+   0.343256256s  INFO prepare_target{force=false package_id=gdk v0.18.2 target="gdk"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/gdk-7711b2452ac34246/lib-gdk`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: __libc_start_main
+  21: <unknown>
+   0.343515786s  INFO prepare_target{force=false package_id=gdk-pixbuf v0.18.5 target="gdk_pixbuf"}: cargo::core::compiler::fingerprint: fingerprint error for gdk-pixbuf v0.18.5/Check { test: false }/TargetInner { ..: lib_target("gdk_pixbuf", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gdk-pixbuf-0.18.5/src/lib.rs", Edition2021) }
+   0.343524237s  INFO prepare_target{force=false package_id=gdk-pixbuf v0.18.5 target="gdk_pixbuf"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/gdk-pixbuf-d41840aa28e4f844/lib-gdk_pixbuf`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: <unknown>
+  21: __libc_start_main
+  22: <unknown>
+   0.343907526s  INFO prepare_target{force=false package_id=gio v0.18.4 target="gio"}: cargo::core::compiler::fingerprint: fingerprint error for gio v0.18.4/Check { test: false }/TargetInner { ..: lib_target("gio", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gio-0.18.4/src/lib.rs", Edition2021) }
+   0.343915488s  INFO prepare_target{force=false package_id=gio v0.18.4 target="gio"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/gio-60fd376db85e7f4c/lib-gio`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: <unknown>
+  21: <unknown>
+  22: __libc_start_main
+  23: <unknown>
+   0.344641559s  INFO prepare_target{force=false package_id=pango v0.18.3 target="pango"}: cargo::core::compiler::fingerprint: fingerprint error for pango v0.18.3/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("pango", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pango-0.18.3/src/lib.rs", Edition2021) }
+   0.344650010s  INFO prepare_target{force=false package_id=pango v0.18.3 target="pango"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/pango-e4713df2cd7d188d/lib-pango`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: <unknown>
+  21: __libc_start_main
+  22: <unknown>
+   0.345403109s  INFO prepare_target{force=false package_id=muda v0.19.3 target="muda"}: cargo::core::compiler::fingerprint: fingerprint error for muda v0.19.3/Check { test: false }/TargetInner { ..: lib_target("muda", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/muda-0.19.3/src/lib.rs", Edition2021) }
+   0.345411979s  INFO prepare_target{force=false package_id=muda v0.19.3 target="muda"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/muda-389828fa19303220/lib-muda`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: __libc_start_main
+  20: <unknown>
+   0.346765294s  INFO prepare_target{force=false package_id=tauri-runtime v2.11.3 target="tauri_runtime"}: cargo::core::compiler::fingerprint: fingerprint error for tauri-runtime v2.11.3/Check { test: false }/TargetInner { ..: lib_target("tauri_runtime", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-2.11.3/src/lib.rs", Edition2021) }
+   0.346773955s  INFO prepare_target{force=false package_id=tauri-runtime v2.11.3 target="tauri_runtime"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/tauri-runtime-2110b40733ceb340/lib-tauri_runtime`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: __libc_start_main
+  20: <unknown>
+   0.349165462s  INFO prepare_target{force=false package_id=webkit2gtk v2.0.2 target="webkit2gtk"}: cargo::core::compiler::fingerprint: fingerprint error for webkit2gtk v2.0.2/Check { test: false }/TargetInner { ..: lib_target("webkit2gtk", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/webkit2gtk-2.0.2/src/lib.rs", Edition2021) }
+   0.349175030s  INFO prepare_target{force=false package_id=webkit2gtk v2.0.2 target="webkit2gtk"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/webkit2gtk-4aa39f51de5b7e85/lib-webkit2gtk`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: __libc_start_main
+  21: <unknown>
+   0.349759672s  INFO prepare_target{force=false package_id=soup3 v0.5.0 target="soup"}: cargo::core::compiler::fingerprint: fingerprint error for soup3 v0.5.0/Check { test: false }/TargetInner { ..: lib_target("soup", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/soup3-0.5.0/src/lib.rs", Edition2021) }
+   0.349768263s  INFO prepare_target{force=false package_id=soup3 v0.5.0 target="soup"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/soup3-6b54dfbdc91f30a8/lib-soup`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: <unknown>
+  21: __libc_start_main
+  22: <unknown>
+   0.350426168s  INFO prepare_target{force=false package_id=tauri-runtime-wry v2.11.4 target="tauri_runtime_wry"}: cargo::core::compiler::fingerprint: fingerprint error for tauri-runtime-wry v2.11.4/Check { test: false }/TargetInner { ..: lib_target("tauri_runtime_wry", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-2.11.4/src/lib.rs", Edition2021) }
+   0.350435108s  INFO prepare_target{force=false package_id=tauri-runtime-wry v2.11.4 target="tauri_runtime_wry"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/tauri-runtime-wry-8e4c6e2a65e06464/lib-tauri_runtime_wry`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: __libc_start_main
+  20: <unknown>
+   0.350983153s  INFO prepare_target{force=false package_id=tao v0.35.3 target="tao"}: cargo::core::compiler::fingerprint: fingerprint error for tao v0.35.3/Check { test: false }/TargetInner { ..: lib_target("tao", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tao-0.35.3/src/lib.rs", Edition2021) }
+   0.350991255s  INFO prepare_target{force=false package_id=tao v0.35.3 target="tao"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/tao-e76c4876fa159bc6/lib-tao`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: __libc_start_main
+  21: <unknown>
+   0.352393110s  INFO prepare_target{force=false package_id=wry v0.55.1 target="wry"}: cargo::core::compiler::fingerprint: fingerprint error for wry v0.55.1/Check { test: false }/TargetInner { ..: lib_target("wry", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wry-0.55.1/src/lib.rs", Edition2021) }
+   0.352401212s  INFO prepare_target{force=false package_id=wry v0.55.1 target="wry"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/wry-7c7e762dcf0204c0/lib-wry`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: __libc_start_main
+  21: <unknown>
+   0.352800285s  INFO prepare_target{force=false package_id=gdkx11 v0.18.2 target="gdkx11"}: cargo::core::compiler::fingerprint: fingerprint error for gdkx11 v0.18.2/Check { test: false }/TargetInner { ..: lib_target("gdkx11", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gdkx11-0.18.2/src/lib.rs", Edition2021) }
+   0.352807269s  INFO prepare_target{force=false package_id=gdkx11 v0.18.2 target="gdkx11"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/gdkx11-c2bec316f145d949/lib-gdkx11`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: <unknown>
+  21: __libc_start_main
+  22: <unknown>
+   0.353197194s  INFO prepare_target{force=false package_id=tauri-plugin-dialog v2.7.2 target="tauri_plugin_dialog"}: cargo::core::compiler::fingerprint: fingerprint error for tauri-plugin-dialog v2.7.2/Check { test: false }/TargetInner { ..: lib_target("tauri_plugin_dialog", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-dialog-2.7.2/src/lib.rs", Edition2021) }
+   0.353205365s  INFO prepare_target{force=false package_id=tauri-plugin-dialog v2.7.2 target="tauri_plugin_dialog"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/tauri-plugin-dialog-790da31b3916fae8/lib-tauri_plugin_dialog`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: __libc_start_main
+  19: <unknown>
+   0.354481227s  INFO prepare_target{force=false package_id=tauri-plugin-fs v2.5.1 target="tauri_plugin_fs"}: cargo::core::compiler::fingerprint: fingerprint error for tauri-plugin-fs v2.5.1/Check { test: false }/TargetInner { ..: lib_target("tauri_plugin_fs", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-fs-2.5.1/src/lib.rs", Edition2021) }
+   0.354493240s  INFO prepare_target{force=false package_id=tauri-plugin-fs v2.5.1 target="tauri_plugin_fs"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/tauri-plugin-fs-eaee189f4daa5149/lib-tauri_plugin_fs`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: __libc_start_main
+  20: <unknown>
+   0.355537717s  INFO prepare_target{force=false package_id=tauri-plugin-notification v2.3.3 target="tauri_plugin_notification"}: cargo::core::compiler::fingerprint: fingerprint error for tauri-plugin-notification v2.3.3/Check { test: false }/TargetInner { ..: lib_target("tauri_plugin_notification", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-notification-2.3.3/src/lib.rs", Edition2021) }
+   0.355550219s  INFO prepare_target{force=false package_id=tauri-plugin-notification v2.3.3 target="tauri_plugin_notification"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/tauri-plugin-notification-beefb716d72ac918/lib-tauri_plugin_notification`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: __libc_start_main
+  19: <unknown>
+   0.359492763s  INFO prepare_target{force=false package_id=tauri-plugin-shell v2.3.5 target="tauri_plugin_shell"}: cargo::core::compiler::fingerprint: fingerprint error for tauri-plugin-shell v2.3.5/Check { test: false }/TargetInner { ..: lib_target("tauri_plugin_shell", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-shell-2.3.5/src/lib.rs", Edition2021) }
+   0.359509385s  INFO prepare_target{force=false package_id=tauri-plugin-shell v2.3.5 target="tauri_plugin_shell"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/tauri-plugin-shell-93bed3174b6fdd89/lib-tauri_plugin_shell`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: __libc_start_main
+  19: <unknown>
+   0.361327425s  INFO prepare_target{force=false package_id=whisper-rs v0.11.1 target="whisper_rs"}: cargo::core::compiler::fingerprint: fingerprint error for whisper-rs v0.11.1/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("whisper_rs", ["lib"], "/home/dt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/whisper-rs-0.11.1/src/lib.rs", Edition2021) }
+   0.361339996s  INFO prepare_target{force=false package_id=whisper-rs v0.11.1 target="whisper_rs"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/whisper-rs-74706e024cbdef64/lib-whisper_rs`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: __libc_start_main
+  19: <unknown>
+   0.362968487s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal_lib"}: cargo::core::compiler::fingerprint: fingerprint error for polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri)/Check { test: true }/TargetInner { ..: lib_target("polyvocal_lib", ["staticlib", "cdylib", "rlib"], "/home/dt/github/polyVocal/src-tauri/src/lib.rs", Edition2021) }
+   0.362981268s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal_lib"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/polyvocal-1e3bd986c92ed2ba/test-lib-polyvocal_lib`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_main
+  18: <unknown>
+   0.365318718s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal"}: cargo::core::compiler::fingerprint: fingerprint error for polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri)/Check { test: false }/TargetInner { name: "polyvocal", doc: true, ..: with_path("/home/dt/github/polyVocal/src-tauri/src/main.rs", Edition2021) }
+   0.365336458s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/polyvocal-a9c11b3de40edadf/bin-polyvocal`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_main
+  18: <unknown>
+   0.367430232s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal"}: cargo::core::compiler::fingerprint: fingerprint error for polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri)/Check { test: true }/TargetInner { name: "polyvocal", doc: true, ..: with_path("/home/dt/github/polyVocal/src-tauri/src/main.rs", Edition2021) }
+   0.367443572s  INFO prepare_target{force=false package_id=polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri) target="polyvocal"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dt/github/polyVocal/src-tauri/target/debug/.fingerprint/polyvocal-9e60dacd42ca7f5b/test-bin-polyvocal`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_main
+  18: <unknown>
+    Checking gio v0.18.4
+    Checking whisper-rs v0.11.1
+   Compiling polyvocal v0.1.0 (/home/dt/github/polyVocal/src-tauri)
+    Checking reqwest v0.11.27
+error: could not compile `whisper-rs` (lib) due to 60 previous errors
+warning: build failed, waiting for other jobs to finish...
+    Checking gdk-pixbuf v0.18.5
+    Checking pango v0.18.3
+    Checking soup3 v0.5.0
+    Checking gdk v0.18.2
+    Checking gtk v0.18.2
+    Checking gdkx11 v0.18.2
+    Checking webkit2gtk v2.0.2
+    Checking tao v0.35.3
+    Checking muda v0.19.3
+    Checking wry v0.55.1
+    Checking tauri-runtime v2.11.3
+    Checking tauri-runtime-wry v2.11.4
+    Checking tauri v2.11.5
+    Checking tauri-plugin-fs v2.5.1
+    Checking tauri-plugin-shell v2.3.5
+    Checking tauri-plugin-notification v2.3.3
+    Checking tauri-plugin-dialog v2.7.2
