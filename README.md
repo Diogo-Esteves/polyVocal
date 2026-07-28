@@ -50,6 +50,7 @@ polyVocal/
 | Document | Description |
 |---|---|
 | [SPEC.md](docs/SPEC.md) | Full product specification |
+| [TECH_STACK.md](docs/TECH_STACK.md) | Tech stack analysis & decision |
 | [DECISIONS.md](docs/DECISIONS.md) | Architecture & technology decisions log |
 | [DESIGN.md](design/DESIGN.md) | UI/UX design principles and guidelines |
 | [ROADMAP.md](docs/ROADMAP.md) | Milestones and phased delivery plan |
