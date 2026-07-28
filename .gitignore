@@ -20,6 +20,10 @@ __pycache__/
 .venv/
 venv/
 
+# Rust build outputs
+target/
+src-tauri/target/
+
 # Build outputs
 dist/
 build/
