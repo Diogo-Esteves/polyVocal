@@ -1,0 +1,75 @@
+[package]
+name = "polyvocal"
+version = "0.1.0"
+description = "PolyVocal — fast, local, cross-platform speech-to-text with translation"
+authors = []
+license = "TBD"
+repository = ""
+edition = "2021"
+rust-version = "1.77"
+
+# Tauri build profile — minimise binary size in release
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+[lib]
+name = "polyvocal_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "polyvocal"
+path = "src/main.rs"
+
+# ─── Core dependencies ────────────────────────────────────────────────────────
+
+[dependencies]
+# Tauri — desktop app framework
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Audio capture (cross-platform microphone input)
+cpal = "0.15"
+
+# Whisper inference — Rust bindings over whisper.cpp
+# NOTE: requires whisper.cpp to be built; see build.rs
+whisper-rs = "0.11"
+
+# Storage — async SQLite
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono"] }
+
+# IDs and timestamps
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Language detection (lightweight)
+# whatlang = "0.16"   # optional: fast language detection from text
+
+# Translation (local — HTTP client for LibreTranslate / Argos)
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+
+# ─── Build dependencies ───────────────────────────────────────────────────────
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

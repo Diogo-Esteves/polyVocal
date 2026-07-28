@@ -186,6 +186,6 @@ Mobile: Tauri Mobile (when stable) or Flutter shell wrapping the same Rust engin
 
 | Date | Decision | Notes |
 |---|---|---|
-| — | ⏳ Pending discussion | See Open Questions in SPEC.md |
+| 2026-07-28 | ✅ **Tauri + Rust + whisper-rs** | Recorded as DEC-001 in DECISIONS.md |
 
 > Once decided, record in `DECISIONS.md` as DEC-001.
