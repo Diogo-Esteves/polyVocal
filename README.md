@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🪮 PolyVocal
+<img src="assets/logo/logo.png" alt="PolyVocal" width="120" />
+
+# PolyVocal
 
 **Fast, local, cross-platform speech-to-text with translation.**
 
