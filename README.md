@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎙️ PolyVocal
+# 🪮 PolyVocal
 
 **Fast, local, cross-platform speech-to-text with translation.**
 
