@@ -1,6 +1,4 @@
 use crate::audio::device;
-use serde::{Deserialize, Serialize};
-use tauri::State;
 
 #[tauri::command]
 pub async fn list_input_devices() -> Result<Vec<crate::audio::InputDevice>, String> {
@@ -8,7 +6,7 @@ pub async fn list_input_devices() -> Result<Vec<crate::audio::InputDevice>, Stri
 }
 
 #[tauri::command]
-pub async fn start_recording(device_id: Option<String>) -> Result<(), String> {
+pub async fn start_recording(_device_id: Option<String>) -> Result<(), String> {
     // TODO: start AudioCapture, wire PCM stream into TranscriptionEngine,
     //       emit "transcript:partial" events to frontend
     Ok(())

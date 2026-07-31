@@ -46,7 +46,7 @@ cpal = "0.15"
 
 # Whisper inference — Rust bindings over whisper.cpp
 # NOTE: requires whisper.cpp to be built; see build.rs
-whisper-rs = "0.11"
+whisper-rs = "0.16"
 
 # Storage — async SQLite
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono"] }
