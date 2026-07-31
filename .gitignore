@@ -34,8 +34,8 @@ out/
 *.log
 logs/
 
-# Models (large binary files — keep out of repo)
-models/
+# Downloaded models (large binary files — keep out of repo)
+/models/
 *.bin
 *.pt
 *.gguf
