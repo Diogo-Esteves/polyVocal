@@ -6,7 +6,6 @@ mod sync;
 mod transcription;
 mod translation;
 
-use tauri::Manager;
 use tracing::info;
 
 pub fn run() {
