@@ -1,4 +1,5 @@
-use anyhow::Result;
+#![allow(dead_code)]
+
 use chrono::Utc;
 use uuid::Uuid;
 

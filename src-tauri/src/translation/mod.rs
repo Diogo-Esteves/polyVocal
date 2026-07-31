@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Translation module.
 ///
 /// Responsible for:
@@ -6,8 +8,6 @@
 /// - Returning translated text for display
 /// - (Future) Cloud translation providers as an optional upgrade
 pub mod client;
-
-pub use client::TranslationClient;
 
 /// Supported language codes for translation (MVP).
 pub const SUPPORTED_LANGUAGES: &[(&str, &str)] =

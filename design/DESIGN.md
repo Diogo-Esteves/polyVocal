@@ -23,8 +23,8 @@
 
 ## Visual Identity (TBD)
 
-- [ ] Logo (hairbrush-inspired)
-- [ ] Primary colour palette
+- [ x ] Logo (hairbrush-inspired)
+- [ x ] Primary colour palette
 - [ ] Typography
 - [ ] Icon set
 - [ ] Dark / light mode

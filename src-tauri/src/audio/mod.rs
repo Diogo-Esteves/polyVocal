@@ -8,5 +8,4 @@
 pub mod capture;
 pub mod device;
 
-pub use capture::AudioCapture;
 pub use device::InputDevice;
