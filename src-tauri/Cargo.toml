@@ -44,6 +44,9 @@ serde_json = "1"
 # Audio capture (cross-platform microphone input)
 cpal = "0.15"
 
+# Audio resampling — fast resampler for 16kHz conversion
+rubato = "0.15"
+
 # Whisper inference — Rust bindings over whisper.cpp
 # NOTE: requires whisper.cpp to be built; see build.rs
 whisper-rs = "0.16"
