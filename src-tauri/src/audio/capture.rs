@@ -36,7 +36,21 @@ impl AudioCapture {
     ///
     /// # Returns
     /// Tuple of (AudioCapture handle, receiver for resampled frames)
+    ///
+    /// # Note
+    /// `cpal::Stream` is `!Send` (audio callbacks are thread-affine), so
+    /// this — and the `AudioCapture` it returns — must stay on whichever
+    /// thread calls it for its entire lifetime. This async wrapper exists
+    /// only for call-site convenience; see `start_blocking` for driving
+    /// capture from a dedicated OS thread instead of an async task.
     pub async fn start(device_id: Option<String>) -> Result<(Self, mpsc::Receiver<Vec<f32>>)> {
+        Self::start_blocking(device_id)
+    }
+
+    /// Synchronous version of `start`, for callers that need to build the
+    /// stream on a specific (non-async) OS thread — e.g. a dedicated audio
+    /// thread whose lifetime the caller owns directly.
+    pub fn start_blocking(device_id: Option<String>) -> Result<(Self, mpsc::Receiver<Vec<f32>>)> {
         let host = cpal::default_host();
 
         // Select device
