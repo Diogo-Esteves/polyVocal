@@ -4,15 +4,15 @@
 
 ---
 
-## Phase 0 — Foundation *(current)*
-- [ ] Project scaffolding
-- [ ] SPEC.md completed
-- [ ] Technology stack decided
-- [ ] Design system defined
+## Phase 0 — Foundation
+- [x] Project scaffolding
+- [x] SPEC.md completed
+- [x] Technology stack decided
+- [ ] Design system defined *(logo + palette only — typography, icons, dark/light mode still open)*
 
-## Phase 1 — MVP (Desktop)
-- [ ] Audio capture from microphone
-- [ ] Transcription via local Whisper model
+## Phase 1 — MVP (Desktop) *(current)*
+- [x] Audio capture from microphone
+- [ ] Transcription via local Whisper model *(VAD segmentation + engine interface in place; whisper-rs inference itself not yet wired — needs a bundled model)*
 - [ ] Language auto-detection
 - [ ] Basic UI (single screen)
 - [ ] Linux + macOS + Windows support
