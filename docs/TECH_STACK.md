@@ -1,7 +1,7 @@
 # PolyVocal — Tech Stack Analysis
 
-**Status:** 🔲 Decision pending  
-**Last updated:** 2026-07-28
+**Status:** ✅ Decided — Tauri + Rust + whisper-rs (see DEC-001 in DECISIONS.md)  
+**Last updated:** 2026-08-02
 
 This document evaluates the viable technology options for PolyVocal's desktop app and backend, optimised for:
 - Performance (low latency transcription)
