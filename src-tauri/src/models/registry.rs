@@ -56,3 +56,28 @@ pub struct ModelInfo {
     pub downloaded: bool,
     pub is_active: bool,
 }
+
+/// Available VAD models. Silero is the only one today — no size variants,
+/// since VAD is a fixed pipeline component rather than a user-selectable
+/// quality/speed tradeoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VadModel {
+    Silero,
+}
+
+impl VadModel {
+    pub fn filename(&self) -> &'static str {
+        match self {
+            VadModel::Silero => "silero_vad.onnx",
+        }
+    }
+
+    pub fn download_url(&self) -> &'static str {
+        match self {
+            VadModel::Silero => {
+                "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"
+            }
+        }
+    }
+}
