@@ -6,4 +6,5 @@
 /// - Emitting token-level or segment-level text events to the frontend
 /// - Auto-detecting the spoken language
 pub mod engine;
+pub mod pipeline;
 pub mod session;
