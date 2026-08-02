@@ -3,6 +3,7 @@ use crate::audio::chunker::FrameChunker;
 use crate::audio::device;
 use crate::audio::state::AudioState;
 use crate::models::manager::ModelManager;
+use crate::models::registry::VadModel;
 use crate::storage::models::Session;
 use crate::storage::repository::SessionRepository;
 use crate::transcription::engine::TranscriptionEngine;
@@ -72,13 +73,15 @@ pub async fn start_recording(
         .map_err(|e| e.to_string())?
         .join("models");
 
-    let whisper_path = ModelManager::new(models_dir.clone())
+    let manager = ModelManager::new(models_dir);
+    let whisper_path = manager
         .active_model_path()
         .ok_or_else(|| "No active Whisper model — download one in Settings".to_string())?;
     let engine = TranscriptionEngine::load(whisper_path).map_err(|e| e.to_string())?;
 
-    // TODO: move to ModelManager once Silero has a registry entry of its own.
-    let silero_path = models_dir.join("silero_vad.onnx");
+    // Doesn't auto-download — VAD model must already be fetched via Settings,
+    // same as the Whisper model above.
+    let silero_path = manager.vad_model_path(&VadModel::Silero);
     let scorer = SileroVad::load(silero_path).map_err(|e| e.to_string())?;
     let segmenter = SpeechSegmenter::new(scorer, VAD_THRESHOLD, VAD_MIN_SILENCE_FRAMES);
     let pipeline = RecordingPipeline::new(segmenter, engine);
