@@ -5,6 +5,7 @@ mod storage;
 mod sync;
 mod transcription;
 mod translation;
+mod vad;
 
 use tracing::info;
 
