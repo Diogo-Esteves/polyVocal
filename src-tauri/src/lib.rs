@@ -24,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        .manage(commands::audio::RecordingState::default())
         .invoke_handler(tauri::generate_handler![
             // Audio
             commands::audio::list_input_devices,
