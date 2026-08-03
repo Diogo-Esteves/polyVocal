@@ -2,21 +2,26 @@
 
 use super::segmenter::VoiceActivityScorer;
 use anyhow::{anyhow, Result};
+use ort::session::Session;
+use ort::value::TensorRef;
 use std::path::PathBuf;
 
 /// Silero VAD's recurrent model requires a fixed input width: 512 samples
 /// (32 ms) per inference step at 16 kHz.
 pub const SILERO_FRAME_SIZE: usize = 512;
+const SILERO_SAMPLE_RATE: i64 = 16000;
 
-/// Wrapper around a loaded Silero VAD ONNX model.
-///
-/// Actual inference goes through `ort`; wiring the `ort::Session` is deferred
-/// until the model file and audio fixtures needed to verify it are in place
-/// (see docs/SPEC.md #15 Testing Strategy). Until then, `score` validates its
-/// input and returns a safe stub value.
+/// Length of Silero's combined recurrent state tensor: shape `[2, 1, 128]`
+/// (verified against the real model's I/O metadata — v5 combines the old
+/// v4 h/c state pair into a single tensor).
+const STATE_LEN: usize = 2 * 128;
+
+/// Wrapper around a loaded Silero VAD ONNX model, scored via `ort`.
 #[derive(Debug)]
 pub struct SileroVad {
-    model_path: PathBuf,
+    session: Session,
+    /// Recurrent state carried between calls, shape `[2, 1, 128]` flattened.
+    state: Vec<f32>,
 }
 
 impl SileroVad {
@@ -28,8 +33,16 @@ impl SileroVad {
                 model_path.display()
             ));
         }
-        // TODO: ort::session::Session::builder()?.commit_from_file(&model_path)
-        Ok(Self { model_path })
+
+        let session = Session::builder()
+            .map_err(|e| anyhow!("failed to create ONNX Runtime session builder: {e}"))?
+            .commit_from_file(&model_path)
+            .map_err(|e| anyhow!("failed to load Silero VAD model: {e}"))?;
+
+        Ok(Self {
+            session,
+            state: vec![0.0; STATE_LEN],
+        })
     }
 }
 
@@ -47,22 +60,38 @@ impl VoiceActivityScorer for SileroVad {
                 frame.len()
             ));
         }
-        // TODO: run ort session inference, carrying recurrent h/c state across calls
-        Ok(0.0)
+
+        let input = TensorRef::from_array_view(([1_i64, SILERO_FRAME_SIZE as i64], frame))
+            .map_err(|e| anyhow!("failed to build Silero input tensor: {e}"))?;
+        let state_tensor = TensorRef::from_array_view(([2_i64, 1, 128], self.state.as_slice()))
+            .map_err(|e| anyhow!("failed to build Silero state tensor: {e}"))?;
+        let sr = TensorRef::from_array_view((Vec::<i64>::new(), &[SILERO_SAMPLE_RATE][..]))
+            .map_err(|e| anyhow!("failed to build Silero sample-rate tensor: {e}"))?;
+
+        let outputs = self
+            .session
+            .run(ort::inputs!["input" => input, "state" => state_tensor, "sr" => sr])
+            .map_err(|e| anyhow!("Silero VAD inference failed: {e}"))?;
+
+        let (_, probability) = outputs["output"]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| anyhow!("failed to read Silero output tensor: {e}"))?;
+        let probability = *probability
+            .first()
+            .ok_or_else(|| anyhow!("Silero VAD returned an empty output tensor"))?;
+
+        let (_, new_state) = outputs["stateN"]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| anyhow!("failed to read Silero state tensor: {e}"))?;
+        self.state.copy_from_slice(new_state);
+
+        Ok(probability)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Writes an empty file at a throwaway path so `load`'s existence check
-    /// passes without depending on a real Silero model being present.
-    fn dummy_model_path(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(name);
-        std::fs::write(&path, b"").expect("failed to write dummy model file");
-        path
-    }
 
     #[test]
     fn test_load_missing_model_fails() {
@@ -73,23 +102,62 @@ mod tests {
     }
 
     #[test]
-    fn test_score_rejects_wrong_frame_size() {
-        let path = dummy_model_path("polyvocal_test_silero_wrong_size.onnx");
-        let mut vad = SileroVad::load(path).expect("dummy model file should load");
+    fn test_load_rejects_invalid_model_file() {
+        // A real ort Session can't be built from arbitrary bytes — ONNX
+        // Runtime validates the file format itself. Unlike the missing-model
+        // case above, this exercises the "exists but isn't a real model" path.
+        let path = std::env::temp_dir().join("polyvocal_test_silero_invalid_model.onnx");
+        std::fs::write(&path, b"not a real onnx model").expect("failed to write test file");
 
-        let wrong_size_frame = vec![0.0f32; SILERO_FRAME_SIZE - 1];
-        let result = vad.score(&wrong_size_frame);
+        let result = SileroVad::load(path);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("512"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("failed to load Silero VAD model"));
     }
 
-    #[test]
-    fn test_score_accepts_correct_frame_size() {
-        let path = dummy_model_path("polyvocal_test_silero_correct_size.onnx");
-        let mut vad = SileroVad::load(path).expect("dummy model file should load");
+    /// Downloads the real Silero model (cached across runs, reusing the
+    /// Phase 5 download infra) and runs real inference against it — not
+    /// part of the default suite (network + download on first run), run
+    /// manually with `--ignored` when touching this file. Verifies the
+    /// actual ONNX I/O contract (input/state/sr in, output/stateN out) and
+    /// that recurrent state carries correctly across calls — not a VAD
+    /// accuracy test, since we don't have real speech audio fixtures.
+    #[tokio::test]
+    #[ignore]
+    async fn test_real_silero_inference_end_to_end() {
+        use crate::models::downloader::ReqwestDownloader;
+        use crate::models::manager::ModelManager;
+        use crate::models::registry::VadModel;
 
-        let frame = vec![0.0f32; SILERO_FRAME_SIZE];
-        assert!(vad.score(&frame).is_ok());
+        let models_dir = std::env::temp_dir().join("polyvocal_test_real_silero_models");
+        let manager = ModelManager::new(models_dir);
+        let model_path = manager
+            .ensure_vad_model(&VadModel::Silero, &ReqwestDownloader)
+            .await
+            .expect("real Silero model should download");
+
+        let mut vad = SileroVad::load(model_path).expect("real model should load");
+
+        // Wrong frame size is rejected before touching the model at all.
+        assert!(vad.score(&[0.0; SILERO_FRAME_SIZE - 1]).is_err());
+
+        // Silence should score as (very likely) not speech, and scoring
+        // multiple frames in a row must not fail — proves the recurrent
+        // state tensor round-trips correctly between calls.
+        let silence = vec![0.0f32; SILERO_FRAME_SIZE];
+        let mut last_probability = 1.0;
+        for _ in 0..5 {
+            last_probability = vad
+                .score(&silence)
+                .expect("scoring silence should not fail");
+            assert!((0.0..=1.0).contains(&last_probability));
+        }
+        assert!(
+            last_probability < 0.5,
+            "expected silence to score as not-speech, got {last_probability}"
+        );
     }
 }
