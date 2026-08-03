@@ -6,7 +6,7 @@ authors = []
 license = "TBD"
 repository = ""
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.88" # ort (Silero VAD inference) requires 1.88+
 
 # Tauri build profile — minimise binary size in release
 [profile.release]
@@ -72,6 +72,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Translation (local — HTTP client for LibreTranslate / Argos)
 reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"], default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+ort = "2.0.0-rc.13"
 
 # ─── Build dependencies ───────────────────────────────────────────────────────
 
