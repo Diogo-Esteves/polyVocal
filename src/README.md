@@ -1,21 +1,21 @@
 # Frontend
 
-> Framework decision pending — **React** or **Svelte** (see DEC-002 in DECISIONS.md).
+> Decided: **Leptos + WASM**, zero hand-written JavaScript (see DEC-002 in `docs/DECISIONS.md`).
 
-This directory will contain the web frontend for the Tauri app shell.
+This directory will contain the Leptos frontend for the Tauri app shell, compiled to
+WebAssembly and served inside Tauri's WebView.
 
-## Candidates
+## Stack
 
-| Framework | Bundle size | DX | Notes |
-|---|---|---|---|
-| **Svelte** | Tiny — no runtime | Excellent | Best fit for a lean, fast Tauri app |
-| **React** | Small (with Vite) | Familiar | Larger ecosystem, more hiring pool |
+- **Leptos** — signals-based reactivity, similar to Solid.js
+- **trunk** — build tool, replaces `npm run dev` / `npm run build` in `tauri.conf.json`
+- **tauri-sys** — Rust bindings for Tauri IPC (`invoke`, `listen`) from WASM
+- Live transcript segments arrive via Tauri push events (`transcript:segment`, per DEC-007),
+  not polling — the frontend only listens and renders.
 
-Once decided, initialise with:
+Initialise with:
 ```bash
-# Svelte
-npm create vite@latest . -- --template svelte-ts
-
-# React
-npm create vite@latest . -- --template react-ts
+cargo install trunk
+cargo install cargo-leptos
+cargo leptos new --git https://github.com/leptos-rs/start
 ```
