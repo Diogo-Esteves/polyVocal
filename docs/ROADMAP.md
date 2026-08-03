@@ -15,7 +15,7 @@
 - [x] Transcription via local Whisper model *(real whisper-rs + Silero VAD inference wired end-to-end; models downloaded on demand via HuggingFace, not bundled — proven by `tests/pipeline_integration.rs` against `fixtures/jfk.wav`)*
 - [ ] Language auto-detection *(engine detects and persists the language per session; nothing consumes it yet — no UI, no downstream logic)*
 - [ ] Basic UI (single screen) *(`src/` is still empty — frontend framework decision pending, no commands wired to any UI)*
-- [ ] Linux + macOS + Windows support *(build config is cross-platform; CI only runs on Ubuntu — no macOS/Windows coverage yet)*
+- [x] Linux + macOS + Windows support *(CI now matrixes `check` and `test` jobs across ubuntu-latest, macos-latest, windows-latest, including the real-model `pipeline_integration.rs` test on all three)*
 
 ## Phase 2 — Translation & Polish
 - [x] Text translation integration *(`translate_text` command wired to the real `TranslationClient`/LibreTranslate; uses the session's detected source language, persists the translation, target language is caller-supplied — proven by `commands::translation` unit tests and a manual `--ignored` end-to-end test against `docker-compose.yml`'s LibreTranslate service)*
