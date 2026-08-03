@@ -1,11 +1,11 @@
-mod audio;
+pub mod audio;
 mod commands;
-mod models;
+pub mod models;
 mod storage;
 mod sync;
-mod transcription;
+pub mod transcription;
 mod translation;
-mod vad;
+pub mod vad;
 
 use tracing::info;
 
