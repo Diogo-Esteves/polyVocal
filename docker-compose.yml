@@ -2,6 +2,15 @@
 #
 # Usage:
 #   docker compose up -d
+# or, with Podman (no Docker-specific features used, so this file works
+# unchanged — install `podman-compose`, or use Podman 4+'s built-in
+# `podman compose`, which shells out to the same tool):
+#   podman-compose up -d
+#   podman compose up -d
+#
+# Running against a remote host (podman-remote / `podman --remote`) works
+# the same way once `CONTAINER_HOST` (or `--remote`) points at that host's
+# Podman API socket — the compose file itself doesn't change.
 #
 # The app (and `LIBRETRANSLATE_URL`-less tests) expect it reachable at
 # http://localhost:5000, matching commands/translation.rs's default. Only
