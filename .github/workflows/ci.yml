@@ -33,7 +33,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: cargo-check-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+            src/target
+          key: cargo-check-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock', 'src/Cargo.lock') }}
           restore-keys: |
             cargo-check-${{ runner.os }}-
 
@@ -55,6 +56,23 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: Install trunk
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+
+      - name: cargo fmt (frontend)
+        working-directory: src
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy (frontend)
+        working-directory: src
+        run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+      - name: trunk build
+        working-directory: src
+        run: trunk build
 
   test:
     name: Tests (${{ matrix.os }})

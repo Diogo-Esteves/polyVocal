@@ -42,14 +42,17 @@ impl<V: VoiceActivityScorer, E: Transcriber> RecordingPipeline<V, E> {
 
     /// Feed one frame of 16 kHz mono f32 PCM into the pipeline.
     ///
-    /// Returns an error if VAD scoring or transcription fails; otherwise
-    /// silently accumulates into the session until a segment closes.
-    pub fn push_frame(&mut self, frame: &[f32]) -> Result<()> {
+    /// Returns an error if VAD scoring or transcription fails. Returns
+    /// `Some` (and accumulates into the session) whenever this frame closes
+    /// a speech segment — callers use this to push the segment onward (e.g.
+    /// as a `transcript:segment` event, per DEC-007) without polling.
+    pub fn push_frame(&mut self, frame: &[f32]) -> Result<Option<TranscriptResult>> {
         if let Some(segment) = self.segmenter.push(frame)? {
             let result = self.engine.transcribe(&segment.samples)?;
             self.session.append(&result.text, &result.language);
+            return Ok(Some(result));
         }
-        Ok(())
+        Ok(None)
     }
 
     /// The session accumulated so far.
