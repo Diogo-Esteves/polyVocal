@@ -1,21 +1,32 @@
 # Frontend
 
-> Decided: **Leptos + WASM**, zero hand-written JavaScript (see DEC-002 in `docs/DECISIONS.md`).
+**Leptos + WASM**, zero hand-written JavaScript (see DEC-002 in `docs/DECISIONS.md`).
 
-This directory will contain the Leptos frontend for the Tauri app shell, compiled to
-WebAssembly and served inside Tauri's WebView.
+This directory contains the Leptos frontend for the Tauri app shell, compiled to
+WebAssembly and served inside Tauri's WebView. It's a single-screen MVP (Phase 1,
+`docs/ROADMAP.md`) — no routing, no settings screen.
 
 ## Stack
 
-- **Leptos** — signals-based reactivity, similar to Solid.js
-- **trunk** — build tool, replaces `npm run dev` / `npm run build` in `tauri.conf.json`
-- **tauri-sys** — Rust bindings for Tauri IPC (`invoke`, `listen`) from WASM
-- Live transcript segments arrive via Tauri push events (`transcript:segment`, per DEC-007),
+- **Leptos** (`csr` feature) — signals-based reactivity, similar to Solid.js
+- **trunk** — build tool, invoked by `tauri.conf.json`'s `beforeDevCommand`/`beforeBuildCommand`
+  in place of `npm run dev` / `npm run build`
+- **tauri-sys** — Rust bindings for Tauri IPC (`invoke_result`, `listen`) from WASM
+- Live transcript segments arrive via the `transcript:segment` Tauri push event (DEC-007),
   not polling — the frontend only listens and renders.
 
-Initialise with:
+## Layout
+
+- `src/main.rs` — the whole single-screen UI: record/stop control, live transcript
+  (via `transcript:segment`), detected source language, and a translate action
+  (target language + `translate_text`)
+- `index.html` — trunk's entry point
+- `Trunk.toml` — dev server port (must match `tauri.conf.json`'s `devUrl`) and dist dir
+
+## Local development
+
 ```bash
 cargo install trunk
-cargo install cargo-leptos
-cargo leptos new --git https://github.com/leptos-rs/start
+rustup target add wasm32-unknown-unknown
+trunk serve   # or: cargo tauri dev, from src-tauri/, which drives this automatically
 ```
