@@ -2,12 +2,12 @@
 
 use anyhow::{anyhow, Result};
 use std::path::PathBuf;
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 /// Wrapper around a loaded whisper-rs model.
 #[derive(Debug)]
 pub struct TranscriptionEngine {
-    // TODO: hold whisper_rs::WhisperContext here
-    model_path: PathBuf,
+    context: WhisperContext,
 }
 
 impl TranscriptionEngine {
@@ -16,8 +16,12 @@ impl TranscriptionEngine {
         if !model_path.exists() {
             return Err(anyhow!("Whisper model not found: {}", model_path.display()));
         }
-        // TODO: whisper_rs::WhisperContext::new(model_path.to_str().unwrap())
-        Ok(Self { model_path })
+
+        let context =
+            WhisperContext::new_with_params(&model_path, WhisperContextParameters::default())
+                .map_err(|e| anyhow!("failed to load Whisper model: {e}"))?;
+
+        Ok(Self { context })
     }
 
     /// Transcribe a buffer of 16 kHz mono f32 PCM samples.
@@ -30,11 +34,47 @@ impl TranscriptionEngine {
         if pcm.is_empty() {
             return Err(anyhow!("Cannot transcribe empty audio buffer"));
         }
-        // TODO: set up WhisperParams, run ctx.full(), extract segments
+
+        let mut state = self
+            .context
+            .create_state()
+            .map_err(|e| anyhow!("failed to create Whisper state: {e}"))?;
+
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
+        params.set_language(None); // auto-detect, per DEC-003
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+
+        state
+            .full(params, pcm)
+            .map_err(|e| anyhow!("whisper inference failed: {e}"))?;
+
+        let language = whisper_rs::get_lang_str(state.full_lang_id_from_state())
+            .unwrap_or("en")
+            .to_string();
+
+        let mut text = String::new();
+        let mut segments = Vec::new();
+        for segment in state.as_iter() {
+            let segment_text = segment.to_str_lossy().unwrap_or_default().into_owned();
+            if !text.is_empty() && !segment_text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(segment_text.trim());
+            segments.push(Segment {
+                // whisper.cpp timestamps are in centiseconds (10s of ms).
+                start_ms: segment.start_timestamp() * 10,
+                end_ms: segment.end_timestamp() * 10,
+                text: segment_text,
+            });
+        }
+
         Ok(TranscriptResult {
-            text: String::new(),
-            language: "en".into(),
-            segments: vec![],
+            text,
+            language,
+            segments,
         })
     }
 }
@@ -57,14 +97,6 @@ pub struct Segment {
 mod tests {
     use super::*;
 
-    /// Writes an empty file at a throwaway path so `load`'s existence check
-    /// passes without depending on a real Whisper model being present.
-    fn dummy_model_path(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(name);
-        std::fs::write(&path, b"").expect("failed to write dummy model file");
-        path
-    }
-
     #[test]
     fn test_load_missing_model_fails() {
         let result = TranscriptionEngine::load(PathBuf::from("/nonexistent/path/to/ggml-tiny.bin"));
@@ -74,21 +106,55 @@ mod tests {
     }
 
     #[test]
-    fn test_transcribe_rejects_empty_audio() {
-        let path = dummy_model_path("polyvocal_test_whisper_empty_audio.bin");
-        let engine = TranscriptionEngine::load(path).expect("dummy model file should load");
+    fn test_load_rejects_invalid_model_file() {
+        // A real WhisperContext can't be loaded from arbitrary bytes — whisper.cpp
+        // validates the file format itself. Unlike the missing-model case above,
+        // this exercises the "exists but isn't a real model" error path.
+        let path = std::env::temp_dir().join("polyvocal_test_whisper_invalid_model.bin");
+        std::fs::write(&path, b"not a real ggml model").expect("failed to write test file");
 
-        let result = engine.transcribe(&[]);
+        let result = TranscriptionEngine::load(path);
+
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("empty"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("failed to load Whisper model"));
     }
 
-    #[test]
-    fn test_transcribe_accepts_nonempty_audio() {
-        let path = dummy_model_path("polyvocal_test_whisper_nonempty_audio.bin");
-        let engine = TranscriptionEngine::load(path).expect("dummy model file should load");
+    /// Downloads the real tiny Whisper model (cached across runs, reusing
+    /// the Phase 5 download infra) and runs real inference against it — not
+    /// part of the default suite (network + a ~75MB download on first run),
+    /// run manually with `--ignored` when touching whisper-rs wiring. Proves
+    /// the FFI pipeline works end-to-end; not a transcription-accuracy test,
+    /// since we don't have real speech audio fixtures (silence in, here).
+    #[tokio::test]
+    #[ignore]
+    async fn test_real_whisper_inference_end_to_end() {
+        use crate::models::downloader::ReqwestDownloader;
+        use crate::models::manager::ModelManager;
+        use crate::models::registry::ModelSize;
 
-        let pcm = vec![0.0f32; 1600]; // 100ms of silence at 16kHz
-        assert!(engine.transcribe(&pcm).is_ok());
+        let models_dir = std::env::temp_dir().join("polyvocal_test_real_whisper_models");
+        let manager = ModelManager::new(models_dir.clone());
+        manager
+            .download(&ModelSize::Tiny, &ReqwestDownloader)
+            .await
+            .expect("real tiny model should download");
+
+        let model_path = models_dir.join(ModelSize::Tiny.filename());
+        let engine = TranscriptionEngine::load(model_path).expect("real model should load");
+
+        assert!(engine.transcribe(&[]).is_err());
+
+        let pcm = vec![0.0f32; 16000]; // 1 second of silence at 16kHz
+        let result = engine
+            .transcribe(&pcm)
+            .expect("real inference should not fail on silence");
+
+        // Silence isn't real speech, so we can't assert on transcript
+        // accuracy — only that the FFI round-trip produced a well-formed
+        // result without crashing.
+        assert!(!result.language.is_empty());
     }
 }
