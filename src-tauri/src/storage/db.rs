@@ -31,7 +31,7 @@ pub async fn initialise(app: &AppHandle) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-async fn run_migrations(pool: &SqlitePool) -> Result<()> {
+pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS sessions (

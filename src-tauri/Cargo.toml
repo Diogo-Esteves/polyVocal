@@ -81,3 +81,4 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 hound = "3.5.1"
+wiremock = "0.6.5"

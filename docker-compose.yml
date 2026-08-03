@@ -1,0 +1,28 @@
+# Local LibreTranslate instance for `translation::client::TranslationClient`.
+#
+# Usage:
+#   docker compose up -d
+#
+# The app (and `LIBRETRANSLATE_URL`-less tests) expect it reachable at
+# http://localhost:5000, matching commands/translation.rs's default. Only
+# the languages PolyVocal currently supports (see
+# translation::SUPPORTED_LANGUAGES) are loaded, to keep first-start fast.
+services:
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - LT_LOAD_ONLY=en,pt,es
+      - LT_DISABLE_WEB_UI=true
+    volumes:
+      - libretranslate-models:/home/libretranslate/.local/share/argos-translate
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/languages || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  libretranslate-models:

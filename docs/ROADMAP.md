@@ -18,7 +18,7 @@
 - [ ] Linux + macOS + Windows support *(build config is cross-platform; CI only runs on Ubuntu — no macOS/Windows coverage yet)*
 
 ## Phase 2 — Translation & Polish
-- [ ] Text translation integration *(HTTP client for a local LibreTranslate instance exists in `translation/client.rs`; the `translate_text` command handler is still a stub)*
+- [x] Text translation integration *(`translate_text` command wired to the real `TranslationClient`/LibreTranslate; uses the session's detected source language, persists the translation, target language is caller-supplied — proven by `commands::translation` unit tests and a manual `--ignored` end-to-end test against `docker-compose.yml`'s LibreTranslate service)*
 - [ ] Model switcher (local ↔ cloud) *(local Whisper size switcher — tiny/base/small/medium — exists; no cloud provider integration)*
 - [ ] Improved accuracy and latency
 
