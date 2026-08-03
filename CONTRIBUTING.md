@@ -32,7 +32,7 @@ At this stage the codebase is moving fast. Before opening a PR:
 - `trunk` (Leptos/WASM build tool) — `cargo install trunk`
 - `wasm32-unknown-unknown` target — `rustup target add wasm32-unknown-unknown`
 - Tauri system dependencies — see [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS
-- Docker (optional — only needed to run LibreTranslate locally for translation work; see README's [Translation](README.md#-translation) section)
+- Docker or Podman (optional — only needed to run LibreTranslate locally for translation work; see README's [Translation](README.md#-translation) section)
 
 ### Running in development
 
