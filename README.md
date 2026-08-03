@@ -98,10 +98,12 @@ PolyVocal bundles the `tiny` Whisper model. You can download larger models or br
 using the session's own detected source language (falling back to
 auto-detection if none was recorded).
 
-Run LibreTranslate locally via the included Compose file:
+Run LibreTranslate locally via the included Compose file — Docker or Podman
+both work, since it's a plain Compose file with no Docker-specific features:
 
 ```bash
 docker compose up -d
+# or: podman-compose up -d / podman compose up -d
 ```
 
 This starts LibreTranslate on `http://localhost:5000`, loaded with only the
