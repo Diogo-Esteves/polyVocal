@@ -12,14 +12,14 @@
 
 ## Phase 1 — MVP (Desktop) *(current)*
 - [x] Audio capture from microphone
-- [ ] Transcription via local Whisper model *(VAD segmentation + engine interface in place; whisper-rs inference itself not yet wired — needs a bundled model)*
-- [ ] Language auto-detection
-- [ ] Basic UI (single screen)
-- [ ] Linux + macOS + Windows support
+- [x] Transcription via local Whisper model *(real whisper-rs + Silero VAD inference wired end-to-end; models downloaded on demand via HuggingFace, not bundled — proven by `tests/pipeline_integration.rs` against `fixtures/jfk.wav`)*
+- [ ] Language auto-detection *(engine detects and persists the language per session; nothing consumes it yet — no UI, no downstream logic)*
+- [ ] Basic UI (single screen) *(`src/` is still empty — frontend framework decision pending, no commands wired to any UI)*
+- [ ] Linux + macOS + Windows support *(build config is cross-platform; CI only runs on Ubuntu — no macOS/Windows coverage yet)*
 
 ## Phase 2 — Translation & Polish
-- [ ] Text translation integration
-- [ ] Model switcher (local ↔ cloud)
+- [ ] Text translation integration *(HTTP client for a local LibreTranslate instance exists in `translation/client.rs`; the `translate_text` command handler is still a stub)*
+- [ ] Model switcher (local ↔ cloud) *(local Whisper size switcher — tiny/base/small/medium — exists; no cloud provider integration)*
 - [ ] Improved accuracy and latency
 
 ## Phase 3 — Sync & Multi-device
