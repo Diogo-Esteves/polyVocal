@@ -91,6 +91,38 @@ PolyVocal bundles the `tiny` Whisper model. You can download larger models or br
 
 ---
 
+## 🌍 Translation
+
+`translate_text` sends a session's transcript to a local
+[LibreTranslate](https://github.com/LibreTranslate/LibreTranslate) instance,
+using the session's own detected source language (falling back to
+auto-detection if none was recorded).
+
+Run LibreTranslate locally via the included Compose file:
+
+```bash
+docker compose up -d
+```
+
+This starts LibreTranslate on `http://localhost:5000`, loaded with only the
+language pairs PolyVocal currently supports (`en`, `pt`, `es`) to keep
+first-start fast. First start downloads LibreTranslate's language models, so
+give it a minute before it's ready.
+
+To point at a different instance (a remote server, a different port, one
+that requires an API key), set:
+
+| Env var | Default | Notes |
+|---|---|---|
+| `LIBRETRANSLATE_URL` | `http://localhost:5000` | Base URL of the LibreTranslate instance |
+| `LIBRETRANSLATE_API_KEY` | _(none)_ | Only needed if the instance requires one |
+
+> Note: [DEC-010](docs/DECISIONS.md) specifies OPUS-MT via `candle` as the
+> long-term translation engine (no sidecar process). The LibreTranslate
+> client wired up here is the current interim implementation.
+
+---
+
 ## 🗺️ Roadmap
 
 | Phase | Focus | Status |
