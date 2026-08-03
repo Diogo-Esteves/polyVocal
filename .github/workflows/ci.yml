@@ -11,8 +11,12 @@ env:
 
 jobs:
   check:
-    name: Check & Lint
-    runs-on: ubuntu-latest
+    name: Check & Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -29,9 +33,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: cargo-check-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-check-${{ runner.os }}-
 
       - name: Install Tauri system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -50,8 +57,13 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -65,13 +77,31 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: cargo-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: cargo-test-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-test-${{ runner.os }}-
 
       - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libwebkit2gtk-4.1-dev
 
+      # tests/pipeline_integration.rs downloads real Whisper + Silero models
+      # over the network. Pin Rust's temp dir to a stable, cacheable path
+      # (std::env::temp_dir() honors TMPDIR/TMP/TEMP) so repeat CI runs hit
+      # a warm cache instead of re-downloading tens of MB of model weights,
+      # which matters most on the slower/colder macOS and Windows runners.
+      - name: Cache downloaded models
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/polyvocal_integration_test_models
+          key: models-${{ runner.os }}-${{ hashFiles('src-tauri/tests/pipeline_integration.rs') }}
+
       - name: cargo test
         working-directory: src-tauri
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
         run: cargo test --all
