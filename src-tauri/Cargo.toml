@@ -78,3 +78,6 @@ ort = "2.0.0-rc.13"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+hound = "3.5.1"
