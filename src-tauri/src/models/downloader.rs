@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use futures_util::StreamExt;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
@@ -10,8 +11,13 @@ use tokio::io::AsyncWriteExt;
 /// Implemented by `ReqwestDownloader` in production; tests inject a scripted
 /// implementation so `ModelManager`'s download logic (skip-if-exists, error
 /// propagation, correct destination) is verified without hitting the network.
+///
+/// Uses return-position `impl Future + Send` rather than `async fn` because
+/// this trait is genuinely public API (used from `#[tauri::command]`s, which
+/// require `Send` futures) — plain `async fn` in a public trait can't
+/// express that bound.
 pub trait ModelDownloader {
-    async fn download_to(&self, url: &str, dest: &Path) -> Result<()>;
+    fn download_to(&self, url: &str, dest: &Path) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Streams a URL's response body directly to disk, without buffering the

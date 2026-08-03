@@ -16,12 +16,24 @@ const SILERO_SAMPLE_RATE: i64 = 16000;
 /// v4 h/c state pair into a single tensor).
 const STATE_LEN: usize = 2 * 128;
 
+/// Silero's model expects each 512-sample frame prefixed with the trailing
+/// 64 samples of the *previous* frame (a causal convolution look-back
+/// window). This isn't visible in the ONNX graph's shape metadata at all —
+/// it's a convention only documented in Silero's own Python reference
+/// wrapper (`OnnxWrapper.__call__` in the `silero-vad` PyPI package).
+/// Omitting it doesn't error; it silently produces near-zero scores for
+/// real speech, which is what led to finding this in the first place.
+const CONTEXT_SIZE: usize = 64;
+
 /// Wrapper around a loaded Silero VAD ONNX model, scored via `ort`.
 #[derive(Debug)]
 pub struct SileroVad {
     session: Session,
     /// Recurrent state carried between calls, shape `[2, 1, 128]` flattened.
     state: Vec<f32>,
+    /// Trailing `CONTEXT_SIZE` samples of the previously scored frame,
+    /// prepended to the next input (see `CONTEXT_SIZE` doc comment).
+    context: Vec<f32>,
 }
 
 impl SileroVad {
@@ -42,6 +54,7 @@ impl SileroVad {
         Ok(Self {
             session,
             state: vec![0.0; STATE_LEN],
+            context: vec![0.0; CONTEXT_SIZE],
         })
     }
 }
@@ -61,8 +74,15 @@ impl VoiceActivityScorer for SileroVad {
             ));
         }
 
-        let input = TensorRef::from_array_view(([1_i64, SILERO_FRAME_SIZE as i64], frame))
-            .map_err(|e| anyhow!("failed to build Silero input tensor: {e}"))?;
+        let mut windowed = Vec::with_capacity(CONTEXT_SIZE + SILERO_FRAME_SIZE);
+        windowed.extend_from_slice(&self.context);
+        windowed.extend_from_slice(frame);
+
+        let input = TensorRef::from_array_view((
+            [1_i64, (CONTEXT_SIZE + SILERO_FRAME_SIZE) as i64],
+            windowed.as_slice(),
+        ))
+        .map_err(|e| anyhow!("failed to build Silero input tensor: {e}"))?;
         let state_tensor = TensorRef::from_array_view(([2_i64, 1, 128], self.state.as_slice()))
             .map_err(|e| anyhow!("failed to build Silero state tensor: {e}"))?;
         let sr = TensorRef::from_array_view((Vec::<i64>::new(), &[SILERO_SAMPLE_RATE][..]))
@@ -84,6 +104,9 @@ impl VoiceActivityScorer for SileroVad {
             .try_extract_tensor::<f32>()
             .map_err(|e| anyhow!("failed to read Silero state tensor: {e}"))?;
         self.state.copy_from_slice(new_state);
+
+        self.context
+            .copy_from_slice(&frame[frame.len() - CONTEXT_SIZE..]);
 
         Ok(probability)
     }
@@ -122,9 +145,12 @@ mod tests {
     /// Phase 5 download infra) and runs real inference against it — not
     /// part of the default suite (network + download on first run), run
     /// manually with `--ignored` when touching this file. Verifies the
-    /// actual ONNX I/O contract (input/state/sr in, output/stateN out) and
-    /// that recurrent state carries correctly across calls — not a VAD
-    /// accuracy test, since we don't have real speech audio fixtures.
+    /// actual ONNX I/O contract (input/state/sr in, output/stateN out),
+    /// that recurrent state carries correctly across calls, AND that real
+    /// speech (not just silence) scores as speech — silence-only scoring
+    /// low is a necessary but not sufficient check, since a broken context
+    /// window (see CONTEXT_SIZE) previously passed a silence-only version
+    /// of this test while scoring real speech as near-zero too.
     #[tokio::test]
     #[ignore]
     async fn test_real_silero_inference_end_to_end() {
@@ -158,6 +184,33 @@ mod tests {
         assert!(
             last_probability < 0.5,
             "expected silence to score as not-speech, got {last_probability}"
+        );
+
+        // A loud synthetic tone should score as speech-like once the
+        // context window has real signal in it — proves non-silent input
+        // actually reaches the model and produces a high score — a pure
+        // synthetic tone was tried here first and rejected: Silero is
+        // trained on real speech spectra, and a tone maxes out around 0.3
+        // regardless of amplitude, which isn't a reliable "is this working"
+        // signal. Real speech is the only trustworthy positive case.
+        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/jfk.wav");
+        let mut reader =
+            hound::WavReader::open(fixture_path).expect("fixture should be a valid WAV file");
+        let samples: Vec<f32> = reader
+            .samples::<i16>()
+            .map(|s| s.expect("failed to read sample") as f32 / 32768.0)
+            .collect();
+
+        let mut max_speech_score: f32 = 0.0;
+        for frame in samples.chunks_exact(SILERO_FRAME_SIZE) {
+            let score = vad
+                .score(frame)
+                .expect("scoring real speech should not fail");
+            max_speech_score = max_speech_score.max(score);
+        }
+        assert!(
+            max_speech_score > 0.9,
+            "expected real speech to score confidently as speech, got max {max_speech_score}"
         );
     }
 }
