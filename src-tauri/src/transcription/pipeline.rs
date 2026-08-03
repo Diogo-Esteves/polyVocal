@@ -1,22 +1,38 @@
 #![allow(dead_code)]
 
-use super::engine::TranscriptionEngine;
+use super::engine::{TranscriptResult, TranscriptionEngine};
 use super::session::TranscriptionSession;
 use crate::vad::segmenter::{SpeechSegmenter, VoiceActivityScorer};
 use anyhow::Result;
+
+/// Transcribes a buffer of 16 kHz mono f32 PCM samples.
+///
+/// Implemented by `TranscriptionEngine` (real whisper-rs inference) in
+/// production; tests inject a scripted implementation so `RecordingPipeline`'s
+/// wiring (does closing a segment trigger transcription and land in the
+/// session?) is verified independently of whether real inference works.
+pub trait Transcriber {
+    fn transcribe(&self, pcm: &[f32]) -> Result<TranscriptResult>;
+}
+
+impl Transcriber for TranscriptionEngine {
+    fn transcribe(&self, pcm: &[f32]) -> Result<TranscriptResult> {
+        TranscriptionEngine::transcribe(self, pcm)
+    }
+}
 
 /// Wires VAD segmentation, transcription, and session accumulation together.
 ///
 /// Feeds one 16 kHz mono f32 frame at a time; whenever the segmenter closes a
 /// speech segment, transcribes it and appends the result to the session.
-pub struct RecordingPipeline<V: VoiceActivityScorer> {
+pub struct RecordingPipeline<V: VoiceActivityScorer, E: Transcriber> {
     segmenter: SpeechSegmenter<V>,
-    engine: TranscriptionEngine,
+    engine: E,
     session: TranscriptionSession,
 }
 
-impl<V: VoiceActivityScorer> RecordingPipeline<V> {
-    pub fn new(segmenter: SpeechSegmenter<V>, engine: TranscriptionEngine) -> Self {
+impl<V: VoiceActivityScorer, E: Transcriber> RecordingPipeline<V, E> {
+    pub fn new(segmenter: SpeechSegmenter<V>, engine: E) -> Self {
         Self {
             segmenter,
             engine,
@@ -49,6 +65,7 @@ impl<V: VoiceActivityScorer> RecordingPipeline<V> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::engine::Segment;
     use super::*;
 
     /// Returns preset scores in sequence; panics if asked for more than provided.
@@ -73,20 +90,29 @@ mod tests {
         }
     }
 
-    /// Loads a stub `TranscriptionEngine` against a throwaway empty file, so
-    /// tests don't depend on a real Whisper model being present.
-    fn dummy_engine(name: &str) -> TranscriptionEngine {
-        let path = std::env::temp_dir().join(name);
-        std::fs::write(&path, b"").expect("failed to write dummy model file");
-        TranscriptionEngine::load(path).expect("dummy model file should load")
+    /// Reports a fixed transcript + language for any non-empty audio it
+    /// receives, without running real whisper-rs inference.
+    struct FakeTranscriber;
+
+    impl Transcriber for FakeTranscriber {
+        fn transcribe(&self, pcm: &[f32]) -> Result<TranscriptResult> {
+            Ok(TranscriptResult {
+                text: "hello".to_string(),
+                language: "en".to_string(),
+                segments: vec![Segment {
+                    start_ms: 0,
+                    end_ms: (pcm.len() * 1000 / 16000) as i64,
+                    text: "hello".to_string(),
+                }],
+            })
+        }
     }
 
     #[test]
     fn test_silence_does_not_update_session() {
         let scorer = ScriptedScorer::new(vec![0.0; 3]);
         let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
-        let engine = dummy_engine("polyvocal_test_pipeline_silence.bin");
-        let mut pipeline = RecordingPipeline::new(segmenter, engine);
+        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
 
         let frame = vec![0.0f32; 4];
         for _ in 0..3 {
@@ -103,26 +129,25 @@ mod tests {
         let scores = vec![0.9, 0.9, 0.0, 0.0];
         let scorer = ScriptedScorer::new(scores);
         let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
-        let engine = dummy_engine("polyvocal_test_pipeline_segment.bin");
-        let mut pipeline = RecordingPipeline::new(segmenter, engine);
+        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
 
         let frame = vec![0.1f32; 4];
         for _ in 0..4 {
             pipeline.push_frame(&frame).unwrap();
         }
 
-        // The stub engine reports "en" for any non-empty audio it receives —
-        // this only becomes Some once the segmenter has actually closed a
-        // segment and handed it to the engine.
+        // The fake transcriber reports "en"/"hello" for any non-empty audio
+        // it receives — this only becomes Some once the segmenter has
+        // actually closed a segment and handed it to the engine.
         assert_eq!(pipeline.session().detected_language.as_deref(), Some("en"));
+        assert_eq!(pipeline.session().transcript, "hello");
     }
 
     #[test]
     fn test_finish_returns_accumulated_session() {
         let scorer = ScriptedScorer::new(vec![0.9, 0.9, 0.0, 0.0]);
         let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
-        let engine = dummy_engine("polyvocal_test_pipeline_finish.bin");
-        let mut pipeline = RecordingPipeline::new(segmenter, engine);
+        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
 
         let frame = vec![0.1f32; 4];
         for _ in 0..4 {
