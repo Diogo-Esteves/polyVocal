@@ -11,8 +11,9 @@ use crate::transcription::pipeline::RecordingPipeline;
 use crate::transcription::session::TranscriptionSession;
 use crate::vad::segmenter::SpeechSegmenter;
 use crate::vad::silero::{SileroVad, SILERO_FRAME_SIZE};
+use serde::Serialize;
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -50,6 +51,18 @@ impl Default for RecordingSlot {
 #[derive(Default)]
 pub struct RecordingState(Mutex<RecordingSlot>);
 
+/// Payload for the `transcript:segment` event (DEC-007) — emitted once per
+/// VAD-closed speech segment so the frontend can render it live, without
+/// polling.
+#[derive(Serialize, Clone)]
+struct TranscriptSegmentEvent {
+    session_id: String,
+    text: String,
+    language: String,
+    start_ms: i64,
+    end_ms: i64,
+}
+
 #[tauri::command]
 pub async fn list_input_devices() -> Result<Vec<crate::audio::InputDevice>, String> {
     device::list_input_devices().map_err(|e| e.to_string())
@@ -85,6 +98,10 @@ pub async fn start_recording(
     let scorer = SileroVad::load(silero_path).map_err(|e| e.to_string())?;
     let segmenter = SpeechSegmenter::new(scorer, VAD_THRESHOLD, VAD_MIN_SILENCE_FRAMES);
     let pipeline = RecordingPipeline::new(segmenter, engine);
+    // `Uuid` is `Copy`, so capturing it below (for the emitted events) doesn't
+    // consume this — it's also used after the task finishes to give the
+    // persisted session the same id the frontend saw in live events.
+    let transcription_session_id = pipeline.session().id;
 
     // Build and own the (non-Send) capture stream entirely on a dedicated
     // OS thread; only the frame receiver crosses back to async code.
@@ -119,8 +136,23 @@ pub async fn start_recording(
 
         while let Some(chunk) = rx.recv().await {
             for frame in chunker.push(&chunk) {
-                if let Err(e) = pipeline.push_frame(&frame) {
-                    tracing::error!("transcription pipeline error: {e}");
+                match pipeline.push_frame(&frame) {
+                    Ok(Some(result)) => {
+                        let start_ms = result.segments.first().map(|s| s.start_ms).unwrap_or(0);
+                        let end_ms = result.segments.last().map(|s| s.end_ms).unwrap_or(0);
+                        let payload = TranscriptSegmentEvent {
+                            session_id: transcription_session_id.to_string(),
+                            text: result.text,
+                            language: result.language,
+                            start_ms,
+                            end_ms,
+                        };
+                        if let Err(e) = app.emit("transcript:segment", &payload) {
+                            tracing::error!("failed to emit transcript:segment: {e}");
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::error!("transcription pipeline error: {e}"),
                 }
             }
         }
@@ -175,7 +207,10 @@ pub async fn stop_recording(
     let duration_ms = started_at
         .map(|t| (chrono::Utc::now() - t).num_milliseconds())
         .unwrap_or(0);
-    let record = Session::new(session.transcript, session.detected_language, duration_ms);
+    let mut record = Session::new(session.transcript, session.detected_language, duration_ms);
+    // Reuse the id the frontend already saw in `transcript:segment` events
+    // for this recording, rather than the fresh one `Session::new` mints.
+    record.id = session.id.to_string();
 
     let repository = SessionRepository::new(pool.inner().clone());
     repository.save(&record).await.map_err(|e| e.to_string())?;
