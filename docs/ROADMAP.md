@@ -13,7 +13,7 @@
 ## Phase 1 — MVP (Desktop) *(current)*
 - [x] Audio capture from microphone
 - [x] Transcription via local Whisper model *(real whisper-rs + Silero VAD inference wired end-to-end; models downloaded on demand via HuggingFace, not bundled — proven by `tests/pipeline_integration.rs` against `fixtures/jfk.wav`)*
-- [ ] Language auto-detection *(engine detects and persists the language per session; nothing consumes it yet — no UI, no downstream logic)*
+- [x] Language auto-detection *(engine detects and persists the language per session; UI shows it live off `transcript:segment`, and `translate_text` uses the persisted value with local-detection fallback per DEC-010 — see `src/src/main.rs` and `commands/translation.rs`)*
 - [x] Basic UI (single screen) *(Leptos + WASM app in `src/`, built via `trunk`; record/stop, live transcript via the `transcript:segment` event, detected language, and a translate action wired to `start_recording`/`stop_recording`/`translate_text` — see `src/src/main.rs`)*
 - [x] Linux + macOS + Windows support *(CI now matrixes `check` and `test` jobs across ubuntu-latest, macos-latest, windows-latest, including the real-model `pipeline_integration.rs` test on all three)*
 
