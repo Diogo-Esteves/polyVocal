@@ -18,7 +18,7 @@
 - [x] Linux + macOS + Windows support *(CI now matrixes `check` and `test` jobs across ubuntu-latest, macos-latest, windows-latest, including the real-model `pipeline_integration.rs` test on all three)*
 
 ## Phase 2 — Translation & Polish
-- [x] Text translation integration *(`translate_text` command wired to the real `TranslationClient`/LibreTranslate; uses the session's detected source language, persists the translation, target language is caller-supplied — proven by `commands::translation` unit tests and a manual `--ignored` end-to-end test against `docker-compose.yml`'s LibreTranslate service)*
+- [x] Text translation integration *(`translate_text` command wired to a local OPUS-MT/`candle` engine per DEC-010 — no sidecar process; uses the session's detected source language, falling back to local language detection, persists the translation, target language is caller-supplied — proven by `commands::translation` unit tests and manual `--ignored` end-to-end tests against real downloaded OPUS-MT weights)*
 - [ ] Model switcher (local ↔ cloud) *(local Whisper size switcher — tiny/base/small/medium — exists; no cloud provider integration)*
 - [ ] Improved accuracy and latency
 

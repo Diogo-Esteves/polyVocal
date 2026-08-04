@@ -1,28 +1,60 @@
+use crate::models::downloader::ReqwestDownloader;
 use crate::storage::repository::SessionRepository;
-use crate::translation::client::TranslationClient;
+use crate::translation::engine::{detect_language, TranslationEngine};
 use sqlx::SqlitePool;
-use tauri::State;
+use std::future::Future;
+use std::path::PathBuf;
+use tauri::{AppHandle, Manager, State};
 
-/// Default LibreTranslate endpoint — matches the `libretranslate` service in
-/// `docker-compose.yml`. Override with `LIBRETRANSLATE_URL` (e.g. to point at
-/// a remote instance) and `LIBRETRANSLATE_API_KEY` if the instance requires one.
-const DEFAULT_BASE_URL: &str = "http://localhost:5000";
+/// Abstraction over "translate text from one language to another", so
+/// `translate_session`'s own logic (source-language fallback, persistence,
+/// error handling) can be unit tested without running real candle
+/// inference against real downloaded OPUS-MT weights. `EngineTranslator`
+/// (wrapping `TranslationEngine`) is the production implementation.
+trait Translator {
+    fn translate(
+        &self,
+        text: &str,
+        source_lang: &str,
+        target_lang: &str,
+    ) -> impl Future<Output = anyhow::Result<String>> + Send;
+}
 
-fn translation_client() -> TranslationClient {
-    let base_url =
-        std::env::var("LIBRETRANSLATE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
-    let api_key = std::env::var("LIBRETRANSLATE_API_KEY").ok();
-    TranslationClient::new(base_url, api_key)
+struct EngineTranslator {
+    engine: TranslationEngine,
+}
+
+impl Translator for EngineTranslator {
+    async fn translate(
+        &self,
+        text: &str,
+        source_lang: &str,
+        target_lang: &str,
+    ) -> anyhow::Result<String> {
+        self.engine
+            .translate(text, source_lang, target_lang, &ReqwestDownloader)
+            .await
+    }
+}
+
+fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("models"))
 }
 
 /// Translate a stored session's transcript into `target_lang` and persist
-/// the result back onto the session. Uses the session's own detected source
-/// language rather than a hardcoded one; sessions predating language
-/// detection (or where it failed) fall back to `"auto"` so LibreTranslate
-/// detects it itself.
+/// the result back onto the session. Uses the session's own detected
+/// source language; sessions predating language detection (or where it
+/// failed) fall back to local language detection over the transcript text
+/// itself — unlike LibreTranslate, the local OPUS-MT engine has no
+/// server-side auto-detect to delegate an `"auto"` source to, so this is
+/// resolved to a concrete language up front instead.
 async fn translate_session(
     repository: &SessionRepository,
-    client: &TranslationClient,
+    translator: &impl Translator,
     session_id: &str,
     target_lang: &str,
 ) -> Result<String, String> {
@@ -32,10 +64,15 @@ async fn translate_session(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("session not found: {session_id}"))?;
 
-    let source_lang = session.language.as_deref().unwrap_or("auto");
+    let source_lang = match session.language.as_deref() {
+        Some(lang) => lang.to_string(),
+        None => detect_language(&session.transcript)
+            .ok_or_else(|| "could not detect the session's source language".to_string())?
+            .to_string(),
+    };
 
-    let translated = client
-        .translate(&session.transcript, source_lang, target_lang)
+    let translated = translator
+        .translate(&session.transcript, &source_lang, target_lang)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -49,23 +86,23 @@ async fn translate_session(
 
 #[tauri::command]
 pub async fn translate_text(
+    app: AppHandle,
     pool: State<'_, SqlitePool>,
     session_id: String,
     target_lang: String,
 ) -> Result<String, String> {
     let repository = SessionRepository::new(pool.inner().clone());
-    let client = translation_client();
-    translate_session(&repository, &client, &session_id, &target_lang).await
+    let translator = EngineTranslator {
+        engine: TranslationEngine::new(models_dir(&app)?),
+    };
+    translate_session(&repository, &translator, &session_id, &target_lang).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::models::Session;
-    use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
     async fn test_pool() -> SqlitePool {
         // A single connection: sqlx pools each connection to a distinct
@@ -81,30 +118,37 @@ mod tests {
         pool
     }
 
-    /// Echoes the request's `source` field back in the fake translation, so
-    /// tests can assert which source language the command actually sent
-    /// without needing a real LibreTranslate instance.
-    struct EchoSource;
+    /// Echoes the source language it was called with, so tests can assert
+    /// which source language `translate_session` actually resolved without
+    /// needing real OPUS-MT weights.
+    struct EchoSourceTranslator;
 
-    impl Respond for EchoSource {
-        fn respond(&self, request: &Request) -> ResponseTemplate {
-            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
-            let source = body["source"].as_str().unwrap_or("");
-            ResponseTemplate::new(200)
-                .set_body_json(json!({ "translatedText": format!("[{source}] translated") }))
+    impl Translator for EchoSourceTranslator {
+        async fn translate(
+            &self,
+            _text: &str,
+            source_lang: &str,
+            _target_lang: &str,
+        ) -> anyhow::Result<String> {
+            Ok(format!("[{source_lang}] translated"))
+        }
+    }
+
+    struct FailingTranslator;
+
+    impl Translator for FailingTranslator {
+        async fn translate(
+            &self,
+            _text: &str,
+            _source_lang: &str,
+            _target_lang: &str,
+        ) -> anyhow::Result<String> {
+            Err(anyhow::anyhow!("translation backend unavailable"))
         }
     }
 
     #[tokio::test]
     async fn test_translate_session_uses_detected_source_language() {
-        let mock_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/translate"))
-            .respond_with(EchoSource)
-            .expect(1)
-            .mount(&mock_server)
-            .await;
-
         let pool = test_pool().await;
         let repository = SessionRepository::new(pool);
         let session = Session::new("Hello world".to_string(), Some("en".to_string()), 1000);
@@ -113,8 +157,7 @@ mod tests {
             .await
             .expect("session should save");
 
-        let client = TranslationClient::new(mock_server.uri(), None);
-        let translated = translate_session(&repository, &client, &session.id, "pt")
+        let translated = translate_session(&repository, &EchoSourceTranslator, &session.id, "pt")
             .await
             .expect("translation should succeed");
 
@@ -130,54 +173,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_translate_session_falls_back_to_auto_when_source_language_unknown() {
-        let mock_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/translate"))
-            .respond_with(EchoSource)
-            .expect(1)
-            .mount(&mock_server)
-            .await;
-
+    async fn test_translate_session_falls_back_to_local_detection_when_source_language_unknown() {
         let pool = test_pool().await;
         let repository = SessionRepository::new(pool);
-        // No detected language — e.g. an older session, or detection failed.
-        let session = Session::new("Hi".to_string(), None, 500);
+        // No detected language — e.g. an older session, or detection
+        // failed at transcription time. The transcript itself is
+        // unambiguously English, so local detection should recover it.
+        let session = Session::new(
+            "The quick brown fox jumps over the lazy dog".to_string(),
+            None,
+            500,
+        );
         repository
             .save(&session)
             .await
             .expect("session should save");
 
-        let client = TranslationClient::new(mock_server.uri(), None);
-        let translated = translate_session(&repository, &client, &session.id, "es")
+        let translated = translate_session(&repository, &EchoSourceTranslator, &session.id, "es")
             .await
             .expect("translation should succeed");
 
-        assert_eq!(translated, "[auto] translated");
+        assert_eq!(translated, "[en] translated");
+    }
+
+    #[tokio::test]
+    async fn test_translate_session_errors_when_source_language_cannot_be_detected() {
+        let pool = test_pool().await;
+        let repository = SessionRepository::new(pool);
+        // Digits carry no linguistic signal whatlang can classify.
+        let session = Session::new("0123456789".to_string(), None, 500);
+        repository
+            .save(&session)
+            .await
+            .expect("session should save");
+
+        let result = translate_session(&repository, &EchoSourceTranslator, &session.id, "es").await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("could not detect"));
     }
 
     #[tokio::test]
     async fn test_translate_session_errors_for_unknown_session() {
-        let mock_server = MockServer::start().await;
         let pool = test_pool().await;
         let repository = SessionRepository::new(pool);
-        let client = TranslationClient::new(mock_server.uri(), None);
 
-        let result = translate_session(&repository, &client, "nonexistent", "pt").await;
+        let result =
+            translate_session(&repository, &EchoSourceTranslator, "nonexistent", "pt").await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
     }
 
     #[tokio::test]
-    async fn test_translate_session_propagates_client_error_without_persisting() {
-        let mock_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/translate"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&mock_server)
-            .await;
-
+    async fn test_translate_session_propagates_translator_error_without_persisting() {
         let pool = test_pool().await;
         let repository = SessionRepository::new(pool);
         let session = Session::new("Hello".to_string(), Some("en".to_string()), 100);
@@ -186,8 +235,7 @@ mod tests {
             .await
             .expect("session should save");
 
-        let client = TranslationClient::new(mock_server.uri(), None);
-        let result = translate_session(&repository, &client, &session.id, "pt").await;
+        let result = translate_session(&repository, &FailingTranslator, &session.id, "pt").await;
 
         assert!(result.is_err());
 
@@ -200,16 +248,17 @@ mod tests {
         assert_eq!(unchanged.target_lang, None);
     }
 
-    /// Exercises the real HTTP round-trip against an actual LibreTranslate
-    /// instance — not part of the default suite (needs `docker compose up -d`
-    /// from the repo root first, and LibreTranslate can take a while to
-    /// fetch its language models on first start), run manually with
-    /// `--ignored` when touching the client/command wiring. The mocked
-    /// tests above cover the command's logic (source-language fallback,
-    /// persistence, error handling) in the default suite.
+    /// Exercises real candle + OPUS-MT inference end to end — downloads the
+    /// real `Helsinki-NLP/opus-mt-en-es` checkpoint (~300 MB, cached across
+    /// runs under the OS temp dir) and runs real greedy decoding. Not part
+    /// of the default suite (network + a large download on first run), run
+    /// manually with `--ignored` when touching the engine/tokenizer/model
+    /// registry wiring. The tests above cover `translate_session`'s own
+    /// logic (source-language fallback, persistence, error handling) in
+    /// the default suite via `EchoSourceTranslator`/`FailingTranslator`.
     #[tokio::test]
     #[ignore]
-    async fn test_real_libretranslate_translates_end_to_end() {
+    async fn test_real_candle_translation_en_to_es_end_to_end() {
         let pool = test_pool().await;
         let repository = SessionRepository::new(pool);
         let session = Session::new(
@@ -222,10 +271,47 @@ mod tests {
             .await
             .expect("session should save");
 
-        let client = translation_client();
-        let translated = translate_session(&repository, &client, &session.id, "pt")
+        let models_dir = std::env::temp_dir().join("polyvocal_test_real_translation_models");
+        let translator = EngineTranslator {
+            engine: TranslationEngine::new(models_dir),
+        };
+
+        let translated = translate_session(&repository, &translator, &session.id, "es")
             .await
-            .expect("real LibreTranslate call should succeed");
+            .expect("real candle translation should succeed");
+
+        assert!(!translated.is_empty());
+        assert_ne!(translated, session.transcript);
+    }
+
+    /// Exercises the pt<->es pivot path (no direct Helsinki-NLP model
+    /// exists for that pair — see DEC-010): downloads both
+    /// `opus-mt-ROMANCE-en` and `opus-mt-en-es` (~600 MB total) and runs
+    /// two real translation hops back to back. Not part of the default
+    /// suite, same reasoning as above.
+    #[tokio::test]
+    #[ignore]
+    async fn test_real_candle_translation_pt_to_es_pivots_through_english() {
+        let pool = test_pool().await;
+        let repository = SessionRepository::new(pool);
+        let session = Session::new(
+            "Bom dia, como você está?".to_string(),
+            Some("pt".to_string()),
+            1000,
+        );
+        repository
+            .save(&session)
+            .await
+            .expect("session should save");
+
+        let models_dir = std::env::temp_dir().join("polyvocal_test_real_translation_models");
+        let translator = EngineTranslator {
+            engine: TranslationEngine::new(models_dir),
+        };
+
+        let translated = translate_session(&repository, &translator, &session.id, "es")
+            .await
+            .expect("real pivoted candle translation should succeed");
 
         assert!(!translated.is_empty());
         assert_ne!(translated, session.transcript);

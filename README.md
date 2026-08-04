@@ -93,35 +93,22 @@ PolyVocal bundles the `tiny` Whisper model. You can download larger models or br
 
 ## 🌍 Translation
 
-`translate_text` sends a session's transcript to a local
-[LibreTranslate](https://github.com/LibreTranslate/LibreTranslate) instance,
-using the session's own detected source language (falling back to
-auto-detection if none was recorded).
+`translate_text` runs a session's transcript through a local **OPUS-MT**
+translation model via [`candle`](https://github.com/huggingface/candle) —
+no network, no sidecar process, per [DEC-010](docs/DECISIONS.md). It uses
+the session's own detected source language, falling back to local language
+detection over the transcript when none was recorded (an older session, or
+one where detection failed at transcription time).
 
-Run LibreTranslate locally via the included Compose file — Docker or Podman
-both work, since it's a plain Compose file with no Docker-specific features:
+Supported pairs (MVP): `en↔pt`, `en↔es`, `pt↔es`. There's no single
+Helsinki-NLP model for every pair — in particular `pt↔es` has no direct
+model — so that direction is translated in two hops, pivoting through
+English. See DEC-010 for the full pair→model mapping.
 
-```bash
-docker compose up -d
-# or: podman-compose up -d / podman compose up -d
-```
-
-This starts LibreTranslate on `http://localhost:5000`, loaded with only the
-language pairs PolyVocal currently supports (`en`, `pt`, `es`) to keep
-first-start fast. First start downloads LibreTranslate's language models, so
-give it a minute before it's ready.
-
-To point at a different instance (a remote server, a different port, one
-that requires an API key), set:
-
-| Env var | Default | Notes |
-|---|---|---|
-| `LIBRETRANSLATE_URL` | `http://localhost:5000` | Base URL of the LibreTranslate instance |
-| `LIBRETRANSLATE_API_KEY` | _(none)_ | Only needed if the instance requires one |
-
-> Note: [DEC-010](docs/DECISIONS.md) specifies OPUS-MT via `candle` as the
-> long-term translation engine (no sidecar process). The LibreTranslate
-> client wired up here is the current interim implementation.
+Model weights are downloaded on first use per pair (~300–450 MB each) from
+HuggingFace and cached under the app's models directory, the same
+download-on-demand pattern already used for Whisper and Silero VAD models —
+nothing to install or run yourself.
 
 ---
 
