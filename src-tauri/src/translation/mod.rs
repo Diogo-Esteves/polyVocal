@@ -3,11 +3,11 @@
 /// Translation module.
 ///
 /// Responsible for:
-/// - Sending transcript text to a local translation engine
-///   (LibreTranslate or Argos Translate running as a sidecar)
+/// - Running local OPUS-MT (MarianMT) inference via `candle`, per DEC-010 —
+///   no network, no sidecar process
 /// - Returning translated text for display
-/// - (Future) Cloud translation providers as an optional upgrade
-pub mod client;
+pub mod engine;
+pub mod tokenizer;
 
 /// Supported language codes for translation (MVP).
 pub const SUPPORTED_LANGUAGES: &[(&str, &str)] =
