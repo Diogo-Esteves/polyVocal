@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use super::downloader::ModelDownloader;
-use super::registry::{ModelInfo, ModelSize, VadModel};
+use super::registry::{ModelInfo, ModelSize, TranslationModel, VadModel, TRANSLATION_MODEL_FILES};
 use anyhow::Result;
 use std::path::PathBuf;
 use tracing::info;
@@ -105,6 +105,40 @@ impl ModelManager {
             downloader.download_to(model.download_url(), &dest).await?;
         }
         Ok(dest)
+    }
+
+    /// Directory a translation model's files live (or would live) in.
+    pub fn translation_model_dir(&self, model: &TranslationModel) -> PathBuf {
+        self.models_dir.join("translation").join(model.dir_name())
+    }
+
+    /// Download all of a translation model's files, unless already present,
+    /// returning the directory containing them. Each file is checked
+    /// independently so an interrupted download only re-fetches what's
+    /// missing, not the whole model.
+    pub async fn ensure_translation_model<D: ModelDownloader>(
+        &self,
+        model: &TranslationModel,
+        downloader: &D,
+    ) -> Result<PathBuf> {
+        let dir = self.translation_model_dir(model);
+        std::fs::create_dir_all(&dir)?;
+        for file in TRANSLATION_MODEL_FILES {
+            let dest = dir.join(file);
+            if dest.exists() {
+                continue;
+            }
+            info!(
+                "Downloading translation model file {}/{} → {}",
+                model.dir_name(),
+                file,
+                dest.display()
+            );
+            downloader
+                .download_to(&model.download_url(file), &dest)
+                .await?;
+        }
+        Ok(dir)
     }
 }
 
@@ -254,5 +288,60 @@ mod tests {
 
         assert_eq!(downloader.call_count(), 0);
         assert_eq!(std::fs::read(&dest).unwrap(), b"already here");
+    }
+
+    #[tokio::test]
+    async fn test_ensure_translation_model_downloads_all_files() {
+        let dir = temp_models_dir("polyvocal_test_translation_download");
+        let model_dir = dir
+            .join("translation")
+            .join(TranslationModel::EnEs.dir_name());
+        let _ = std::fs::remove_dir_all(&model_dir);
+
+        let manager = ModelManager::new(dir.clone());
+        let downloader = FakeDownloader::success(b"fake weights");
+
+        let path = manager
+            .ensure_translation_model(&TranslationModel::EnEs, &downloader)
+            .await
+            .unwrap();
+
+        assert_eq!(path, model_dir);
+        assert_eq!(downloader.call_count(), TRANSLATION_MODEL_FILES.len());
+        for file in TRANSLATION_MODEL_FILES {
+            assert_eq!(
+                std::fs::read(model_dir.join(file)).unwrap(),
+                b"fake weights"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ensure_translation_model_only_downloads_missing_files() {
+        let dir = temp_models_dir("polyvocal_test_translation_partial");
+        let model_dir = dir
+            .join("translation")
+            .join(TranslationModel::EnEs.dir_name());
+        let _ = std::fs::remove_dir_all(&model_dir);
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("config.json"), b"already here").unwrap();
+
+        let manager = ModelManager::new(dir.clone());
+        let downloader = FakeDownloader::success(b"freshly downloaded");
+
+        manager
+            .ensure_translation_model(&TranslationModel::EnEs, &downloader)
+            .await
+            .unwrap();
+
+        assert_eq!(downloader.call_count(), TRANSLATION_MODEL_FILES.len() - 1);
+        assert_eq!(
+            std::fs::read(model_dir.join("config.json")).unwrap(),
+            b"already here"
+        );
+        assert_eq!(
+            std::fs::read(model_dir.join("vocab.json")).unwrap(),
+            b"freshly downloaded"
+        );
     }
 }
