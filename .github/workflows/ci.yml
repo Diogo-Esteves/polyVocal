@@ -8,6 +8,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # whisper-rs-sys defaults to GGML_NATIVE=ON, which bakes `-march=native`
+  # into the ggml build for whichever CPU happens to build it. GitHub-hosted
+  # runners aren't guaranteed the same host across cache restores, so a
+  # binary built on one Ubuntu runner generation can SIGILL when the cargo
+  # target-dir cache is restored onto a different one. Force the portable
+  # baseline instead.
+  GGML_NATIVE: "OFF"
 
 jobs:
   check:
@@ -34,9 +41,9 @@ jobs:
             ~/.cargo/git
             src-tauri/target
             src/target
-          key: cargo-check-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock', 'src/Cargo.lock') }}
+          key: cargo-check-v2-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock', 'src/Cargo.lock') }}
           restore-keys: |
-            cargo-check-${{ runner.os }}-
+            cargo-check-v2-${{ runner.os }}-
 
       - name: Install Tauri system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -95,9 +102,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: cargo-test-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: cargo-test-v2-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            cargo-test-${{ runner.os }}-
+            cargo-test-v2-${{ runner.os }}-
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
