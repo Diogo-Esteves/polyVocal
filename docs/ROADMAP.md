@@ -8,7 +8,7 @@
 - [x] Project scaffolding
 - [x] SPEC.md completed
 - [x] Technology stack decided
-- [ ] Design system defined *(logo + palette only — typography, icons, dark/light mode still open)*
+- [x] Design system defined *(logo + palette + typography (OS-native font stack) + icon set (Lucide, inlined SVG) + dark/light mode (`prefers-color-scheme` + manual override) — see `design/DESIGN.md`)*
 
 ## Phase 1 — MVP (Desktop) *(current)*
 - [x] Audio capture from microphone
