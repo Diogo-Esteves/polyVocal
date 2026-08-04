@@ -66,13 +66,39 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Language detection (lightweight)
-# whatlang = "0.16"   # optional: fast language detection from text
+# Language detection — resolves a session's source language locally when
+# it wasn't recorded at transcription time, so the translation engine
+# always has a concrete source/target pair to route (see
+# translation::engine::detect_language).
+whatlang = "0.16"
 
-# Translation (local — HTTP client for LibreTranslate / Argos)
+# Model downloads (Whisper/Silero/OPUS-MT weights, all fetched from HuggingFace)
 reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"], default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 ort = "2.0.0-rc.13"
+
+# Translation inference — OPUS-MT (MarianMT) via candle, per DEC-010.
+# Default (no `mkl`/`accelerate`/`cuda` features): candle's CPU backend
+# dispatches on CPU features at *runtime* (via the `gemm` crate), unlike
+# whisper-rs-sys's GGML_NATIVE, which bakes `-march=native` in at *build*
+# time. So there's no equivalent "built on one CI runner, SIGILLs on
+# another" risk here — intentionally not enabling any accelerated backend,
+# to keep the CPU path portable across runner generations.
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+
+# OPUS-MT models ship raw SentencePiece `.model` files (source.spm) and a
+# plain vocab.json, not a HF `tokenizers` fast-tokenizer JSON — so the
+# `tokenizers` crate alone can't load them directly. `rust_tokenizers` has a
+# purpose-built, pure-Rust `MarianTokenizer` (reimplements SentencePiece's
+# Viterbi segmentation + NFKC normalisation + Marian's `>>lang<<` prefix
+# handling, reading `source.spm`/`vocab.json` directly) — used here instead
+# of an FFI binding to the reference SentencePiece C++ library specifically
+# because it's pure Rust: an FFI crate would statically vendor its own copy
+# of protobuf-lite, which collides at link time with the one already
+# bundled inside `ort`'s downloaded static `onnxruntime` (DEC-004).
+rust_tokenizers = "8"
 
 # ─── Build dependencies ───────────────────────────────────────────────────────
 
@@ -81,4 +107,3 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 hound = "3.5.1"
-wiremock = "0.6.5"

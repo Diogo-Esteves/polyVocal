@@ -263,6 +263,51 @@ Use **OPUS-MT** translation models run via **HuggingFace `candle`** (pure Rust M
 - MVP language pairs: `en↔pt`, `en↔es`, `pt↔es`
 - Translation is a post-processing step triggered by user action
 
+**Implementation update (2026-08-04):** replaced the interim LibreTranslate
+HTTP client (issue #20) with the local `candle` engine described above
+(issue #35). A few details only became clear during implementation and
+amend the consequences above:
+
+- **Crate versions:** `candle-core`/`candle-nn`/`candle-transformers` 0.11.
+  No accelerated backend (`mkl`/`accelerate`/`cuda`) is enabled — candle's
+  default CPU backend (the `gemm` crate) dispatches on CPU features at
+  *runtime*, unlike `whisper-rs-sys`'s `GGML_NATIVE` (see DEC-001's CI
+  fix), which bakes `-march=native` in at *build* time. So there's no
+  equivalent "built on one CI runner, SIGILLs on another" risk to guard
+  against here, and no CI change was needed.
+- **No single Helsinki-NLP model covers every MVP pair.** `en↔es` and
+  `en→pt` have direct OPUS-MT models; `pt→en` has no dedicated model, so it
+  goes through `Helsinki-NLP/opus-mt-ROMANCE-en` (many Romance source
+  languages, including pt, to a fixed English target); `pt↔es` has no
+  model in either direction, so it's translated in two hops, pivoting
+  through English (`pt→en→es`, `es→en→pt`) using the models above.
+- **Tokenization needs more than `candle` + a `tokenizers` JSON.** OPUS-MT
+  repos ship a raw SentencePiece `.model` file and a plain `vocab.json`,
+  not a HF fast-tokenizer JSON. The `rust_tokenizers` crate (pure Rust,
+  reimplements SentencePiece's segmentation, Marian's `>>lang<<` prefix
+  handling, and NFKC normalisation) is used instead of FFI-binding the
+  reference SentencePiece C++ library: an FFI binding statically vendors
+  its own copy of Google's `protobuf-lite`, which collides at link time
+  with the copy already bundled inside `ort`'s downloaded static
+  `onnxruntime` (DEC-004) — both define the same C++ symbols, and the
+  linker refuses to merge two conflicting definitions.
+- **Weights load from `model.safetensors`, not `pytorch_model.bin`.**
+  Several of these repos' `main` branch only publishes the legacy pre-1.6
+  PyTorch pickle format (no zip container), which candle's pickle reader
+  doesn't support. Where `main` lacks a `safetensors` conversion, weights
+  are pulled from the HuggingFace auto-conversion bot's (unmerged, but
+  functional) PR ref instead — the same approach candle's own `marian-mt`
+  example uses for several of these exact repos.
+- **Real model sizes are ~300–450 MB per underlying model file** (four
+  files cover all three MVP pairs bidirectionally, via the pivot above),
+  not the ~300 KB originally estimated above — that figure appears to have
+  been an order-of-magnitude-scale placeholder rather than a measurement.
+  This also corrects DEC-011's "~1 MB" bundled-pair figure; see its own
+  consequences.
+- Models download on demand via the existing `ModelManager` /
+  `ModelDownloader` machinery (same pattern as Whisper/Silero), not
+  bundled in the installer.
+
 ---
 
 ### [DEC-011] Model Distribution: Bundle Tiny + Bring-Your-Own
@@ -288,6 +333,13 @@ Whisper and OPUS-MT models are too large to bundle entirely, but shipping an emp
 - Installer size ~80 MB
 - Model manager UI needed in Settings
 - Open model system — users are never locked into PolyVocal's hosted models
+
+**Amendment (2026-08-04):** the "~1 MB" `en↔pt` OPUS-MT figure above was
+wrong — see DEC-010's implementation update. Real OPUS-MT model files run
+~300–450 MB each, too large to bundle in the installer alongside
+`ggml-tiny.bin`. Translation models are downloaded on first use instead
+(same on-demand pattern as the non-bundled Whisper sizes); only the
+bundled `tiny` Whisper model still ships in the installer.
 
 ---
 
