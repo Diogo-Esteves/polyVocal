@@ -977,6 +977,7 @@ dependencies = [
  "serde",
  "tauri-sys",
  "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

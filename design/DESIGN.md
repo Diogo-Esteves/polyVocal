@@ -25,9 +25,31 @@
 
 - [ x ] Logo (hairbrush-inspired)
 - [ x ] Primary colour palette
-- [ ] Typography
-- [ ] Icon set
-- [ ] Dark / light mode
+- [x] Typography — OS-native font stack (`system-ui, -apple-system, "Segoe UI",
+      Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif`, see
+      `src/styles.css`). No webfont fetch (speed), and it defers glyph
+      coverage to whatever the OS already ships — a single bundled font
+      can't cover every script the transcript/translation panes might need
+      to render, so relying on the platform's own fallback chain is the
+      language-neutral choice. It also inherits the user's OS-level font
+      size and contrast accessibility settings for free.
+- [x] Icon set — [Lucide](https://lucide.dev) (ISC license), a handful of
+      icons hand-inlined as SVG `#[component]`s in `src/src/main.rs`
+      (`mic`, `square`, `languages`, `triangle-alert`, `sun`, `moon`,
+      `sun-moon`) rather than pulled in as a package, since the single
+      screen only needs a few. All are stroke-based, `currentColor` (so
+      they follow the theme automatically), and `aria-hidden` — every icon
+      is paired with a text label, so none of them carry meaning on their
+      own (language-neutral, accessible).
+- [x] Dark / light mode — CSS custom properties in `src/styles.css`.
+      `prefers-color-scheme` is the default (required baseline, zero JS/WASM
+      needed, reacts live to OS changes); a three-state toggle in the header
+      (`Auto → Light → Dark → Auto`, `src/src/main.rs`) can override it
+      explicitly via a `data-theme` attribute on `<html>`, persisted to
+      `localStorage` through `web-sys` (kept in Rust/WASM, per DEC-002 —
+      no hand-written JS). Colors were picked for contrast: body text is
+      ≥7:1 against its background in both themes, and interactive elements
+      (buttons, focus rings) are ≥4.5:1.
 
 ---
 
