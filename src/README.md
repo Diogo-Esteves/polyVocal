@@ -19,7 +19,10 @@ WebAssembly and served inside Tauri's WebView. It's a single-screen MVP (Phase 1
 
 - `src/main.rs` — the whole single-screen UI: record/stop control, live transcript
   (via `transcript:segment`), detected source language, and a translate action
-  (target language + `translate_text`)
+  (target language + `translate_text`); also the inlined icon set and the
+  dark/light theme toggle (see `design/DESIGN.md`)
+- `styles.css` — typography, color tokens (light/dark), and component styles;
+  linked from `index.html` via trunk's `data-trunk rel="css"`
 - `index.html` — trunk's entry point
 - `Trunk.toml` — dev server port (must match `tauri.conf.json`'s `devUrl`) and dist dir
 
