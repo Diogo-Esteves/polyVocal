@@ -69,4 +69,45 @@
 
 ---
 
+## Ideas — under consideration
+
+Feature concepts pulled from a competitor screenshot the user shared
+(2026-08-05) — functional ideas only, not the visual design. None of these
+are scoped or on `docs/ROADMAP.md` yet; they need to be clarified into
+concrete tasks before implementation.
+
+- **Per-speaker audio** — capture and meter "You" and "Others" as separate
+  streams, each with its own level meter and controls, instead of one
+  undifferentiated mic input. Would be a real architecture change (current
+  pipeline assumes a single speaker/source).
+- **Selective translation** — translate only the "Others" stream live, leave
+  the user's own speech untranslated, as a per-source toggle rather than
+  today's one-shot "translate the whole transcript on demand" action.
+- **Live language override** — change the active language mid-session
+  (inline dropdown next to record/stop), instead of only relying on
+  auto-detect or setting language before/after recording.
+- **Pause, distinct from stop** — current UI only has record/stop; no way
+  to pause and resume within one session.
+- **Audio-processing toggle with inline contextual help** — e.g. an "echo
+  reduction" toggle with its tradeoff (latency, headphones-vs-speakers)
+  shown directly under the control, not buried in a separate settings
+  screen.
+- **Multiple structured views of a session** — raw Transcription / Session
+  (metadata) / AI-generated Summary as separate tabs on the same session,
+  rather than one flat transcript view.
+- **System-wide floating/overlay control bar** — a compact always-on-top
+  control surface independent of the main window, for controlling
+  recording from anywhere. Complements the already-roadmapped "global
+  hotkey" item (see root `README.md`).
+- **Quick "mark this moment" action** — a keyboard-shortcut-triggered
+  marker/bookmark dropped into the transcript at the current timestamp
+  while recording.
+- **Assistant/persona mode selector** — implies a conversational AI layer
+  on top of transcription (a "general assistant" you can ask things), which
+  is a materially different and bigger feature direction than transcription
+  + translation — needs its own discussion before it's anything more than
+  an idea.
+
+---
+
 *Wireframes to be added here.*
