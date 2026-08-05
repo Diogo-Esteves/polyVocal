@@ -242,6 +242,12 @@ struct DeleteSessionArgs<'a> {
     id: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportSessionTxtArgs<'a> {
+    id: &'a str,
+}
+
 /// MVP language pairs, matching `translation::SUPPORTED_LANGUAGES` in the backend.
 const TARGET_LANGUAGES: [(&str, &str); 3] =
     [("en", "English"), ("pt", "Portuguese"), ("es", "Spanish")];
@@ -586,6 +592,7 @@ fn App() -> impl IntoView {
                                     let delete_id = id.clone();
                                     let confirm_class_id = id.clone();
                                     let label_id = id.clone();
+                                    let export_id = id.clone();
                                     let preview: String = if session.transcript.chars().count() > 80 {
                                         let truncated: String = session.transcript.chars().take(80).collect();
                                         format!("{truncated}…")
@@ -606,26 +613,43 @@ fn App() -> impl IntoView {
                                                 <p class="session-preview">{preview}</p>
                                                 <p class="session-meta">{language_label}" · "{created_at}{translation_note}</p>
                                             </div>
-                                            <button
-                                                class="session-delete"
-                                                class:is-confirming=move || pending_delete_id.get().as_deref() == Some(confirm_class_id.as_str())
-                                                on:click=move |_| {
-                                                    if pending_delete_id.get_untracked().as_deref() == Some(delete_id.as_str()) {
-                                                        let id_to_delete = delete_id.clone();
-                                                        pending_delete_id.set(None);
+                                            <div class="session-actions">
+                                                <button
+                                                    class="session-export"
+                                                    on:click=move |_| {
+                                                        let id_to_export = export_id.clone();
                                                         spawn_local(async move {
-                                                            let args = DeleteSessionArgs { id: &id_to_delete };
-                                                            if tauri_sys::core::invoke_result::<(), String>("delete_session", args).await.is_ok() {
-                                                                sessions.update(|list| list.retain(|s| s.id != id_to_delete));
+                                                            let args = ExportSessionTxtArgs { id: &id_to_export };
+                                                            match tauri_sys::core::invoke_result::<Option<String>, String>("export_session_txt", args).await {
+                                                                Ok(_) => error_message.set(None),
+                                                                Err(e) => error_message.set(Some(e)),
                                                             }
                                                         });
-                                                    } else {
-                                                        pending_delete_id.set(Some(delete_id.clone()));
                                                     }
-                                                }
-                                            >
-                                                {move || if pending_delete_id.get().as_deref() == Some(label_id.as_str()) { "Confirm delete?" } else { "Delete" }}
-                                            </button>
+                                                >
+                                                    "Export"
+                                                </button>
+                                                <button
+                                                    class="session-delete"
+                                                    class:is-confirming=move || pending_delete_id.get().as_deref() == Some(confirm_class_id.as_str())
+                                                    on:click=move |_| {
+                                                        if pending_delete_id.get_untracked().as_deref() == Some(delete_id.as_str()) {
+                                                            let id_to_delete = delete_id.clone();
+                                                            pending_delete_id.set(None);
+                                                            spawn_local(async move {
+                                                                let args = DeleteSessionArgs { id: &id_to_delete };
+                                                                if tauri_sys::core::invoke_result::<(), String>("delete_session", args).await.is_ok() {
+                                                                    sessions.update(|list| list.retain(|s| s.id != id_to_delete));
+                                                                }
+                                                            });
+                                                        } else {
+                                                            pending_delete_id.set(Some(delete_id.clone()));
+                                                        }
+                                                    }
+                                                >
+                                                    {move || if pending_delete_id.get().as_deref() == Some(label_id.as_str()) { "Confirm delete?" } else { "Delete" }}
+                                                </button>
+                                            </div>
                                         </li>
                                     }
                                 }).collect_view()}

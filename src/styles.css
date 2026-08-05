@@ -308,6 +308,13 @@ select {
   font-size: 0.85rem;
 }
 
+.session-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.session-export,
 .session-delete {
   flex-shrink: 0;
 }

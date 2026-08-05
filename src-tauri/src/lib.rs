@@ -38,6 +38,7 @@ pub fn run() {
             commands::storage::list_sessions,
             commands::storage::get_session,
             commands::storage::delete_session,
+            commands::storage::export_session_txt,
             // Models
             commands::models::list_models,
             commands::models::download_model,
