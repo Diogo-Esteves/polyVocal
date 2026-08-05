@@ -42,3 +42,7 @@ logs/
 
 # Sync / runtime
 .cache/
+
+# Internal-only planning docs — kept locally, not published to the public repo
+/docs/DECISIONS.md
+/docs/SPEC.md
