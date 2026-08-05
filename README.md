@@ -95,15 +95,15 @@ PolyVocal bundles the `tiny` Whisper model. You can download larger models or br
 
 `translate_text` runs a session's transcript through a local **OPUS-MT**
 translation model via [`candle`](https://github.com/huggingface/candle) —
-no network, no sidecar process, per [DEC-010](docs/DECISIONS.md). It uses
-the session's own detected source language, falling back to local language
-detection over the transcript when none was recorded (an older session, or
-one where detection failed at transcription time).
+no network, no sidecar process. It uses the session's own detected source
+language, falling back to local language detection over the transcript
+when none was recorded (an older session, or one where detection failed
+at transcription time).
 
 Supported pairs (MVP): `en↔pt`, `en↔es`, `pt↔es`. There's no single
 Helsinki-NLP model for every pair — in particular `pt↔es` has no direct
 model — so that direction is translated in two hops, pivoting through
-English. See DEC-010 for the full pair→model mapping.
+English.
 
 Model weights are downloaded on first use per pair (~300–450 MB each) from
 HuggingFace and cached under the app's models directory, the same
@@ -129,8 +129,6 @@ nothing to install or run yourself.
 
 | Document | Description |
 |---|---|
-| [SPEC.md](docs/SPEC.md) | Full product specification |
-| [DECISIONS.md](docs/DECISIONS.md) | Architecture decision log (19 decisions) |
 | [TECH_STACK.md](docs/TECH_STACK.md) | Stack analysis and rationale |
 | [ROADMAP.md](docs/ROADMAP.md) | Phased delivery plan |
 | [DESIGN.md](design/DESIGN.md) | UI/UX principles |
