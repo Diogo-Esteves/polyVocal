@@ -252,7 +252,12 @@ select {
   color: var(--color-text);
 }
 
-.model-list {
+.sessions-empty {
+  color: var(--color-text-muted);
+}
+
+.model-list,
+.session-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -261,7 +266,8 @@ select {
   gap: 0.5rem;
 }
 
-.model-item {
+.model-item,
+.session-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -285,4 +291,29 @@ select {
 .model-download,
 .model-activate {
   flex-shrink: 0;
+}
+
+.session-body {
+  min-width: 0;
+}
+
+.session-preview {
+  margin: 0 0 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.session-meta {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.session-delete {
+  flex-shrink: 0;
+}
+
+.session-delete.is-confirming {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }

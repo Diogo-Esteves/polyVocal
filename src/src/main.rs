@@ -213,6 +213,35 @@ struct TranslateArgs<'a> {
     target_lang: &'a str,
 }
 
+/// Mirrors the backend `storage::models::Session` struct — only the fields
+/// this screen renders are declared; serde ignores the rest (same approach
+/// as `TranscriptSegment` above). No `#[serde(rename_all)]` here — unlike
+/// the `*Args` structs above (which are command *arguments*, auto-camelCased
+/// by Tauri), this is a command *return value*, serialized as-is by the
+/// backend's own (unrenamed, snake_case) `Serialize` impl.
+#[derive(Deserialize, Clone)]
+struct Session {
+    id: String,
+    created_at: String,
+    language: Option<String>,
+    transcript: String,
+    translation: Option<String>,
+    target_lang: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListSessionsArgs {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteSessionArgs<'a> {
+    id: &'a str,
+}
+
 /// MVP language pairs, matching `translation::SUPPORTED_LANGUAGES` in the backend.
 const TARGET_LANGUAGES: [(&str, &str); 3] =
     [("en", "English"), ("pt", "Portuguese"), ("es", "Spanish")];
@@ -291,6 +320,9 @@ fn App() -> impl IntoView {
     let models = RwSignal::new(Vec::<ModelInfo>::new());
     let models_loading = RwSignal::new(false);
     let downloading_size = RwSignal::new(None::<ModelSize>);
+    let sessions = RwSignal::new(Vec::<Session>::new());
+    let sessions_loading = RwSignal::new(true);
+    let pending_delete_id = RwSignal::new(None::<String>);
 
     // Purely reactive per DEC-007: listen for live transcript segments,
     // never poll a status command.
@@ -310,6 +342,18 @@ fn App() -> impl IntoView {
         }
     });
 
+    spawn_local(async move {
+        let args = ListSessionsArgs {
+            limit: Some(20),
+            offset: Some(0),
+        };
+        match tauri_sys::core::invoke_result::<Vec<Session>, String>("list_sessions", args).await {
+            Ok(list) => sessions.set(list),
+            Err(e) => error_message.set(Some(e)),
+        }
+        sessions_loading.set(false);
+    });
+
     let toggle_recording = move |_| {
         if busy.get_untracked() {
             return;
@@ -322,6 +366,21 @@ fn App() -> impl IntoView {
                     Ok(id) => {
                         session_id.set(Some(id));
                         recording.set(false);
+                        spawn_local(async move {
+                            let args = ListSessionsArgs {
+                                limit: Some(20),
+                                offset: Some(0),
+                            };
+                            if let Ok(list) =
+                                tauri_sys::core::invoke_result::<Vec<Session>, String>(
+                                    "list_sessions",
+                                    args,
+                                )
+                                .await
+                            {
+                                sessions.set(list);
+                            }
+                        });
                     }
                     Err(e) => error_message.set(Some(e)),
                 }
@@ -511,6 +570,70 @@ fn App() -> impl IntoView {
                     <p class="error"><TriangleAlert/> <span>{msg}</span></p>
                 })
             }}
+
+            <section class="sessions">
+                <h2>"Recent Sessions"</h2>
+                {move || {
+                    if sessions_loading.get() {
+                        view! { <p class="sessions-empty">"Loading…"</p> }.into_any()
+                    } else if sessions.get().is_empty() {
+                        view! { <p class="sessions-empty">"No sessions yet."</p> }.into_any()
+                    } else {
+                        view! {
+                            <ul class="session-list">
+                                {sessions.get().into_iter().map(|session| {
+                                    let id = session.id.clone();
+                                    let delete_id = id.clone();
+                                    let confirm_class_id = id.clone();
+                                    let label_id = id.clone();
+                                    let preview: String = if session.transcript.chars().count() > 80 {
+                                        let truncated: String = session.transcript.chars().take(80).collect();
+                                        format!("{truncated}…")
+                                    } else {
+                                        session.transcript.clone()
+                                    };
+                                    let language_label = session.language.clone().unwrap_or_else(|| "—".to_string());
+                                    let created_at = session.created_at.clone();
+                                    let translation_note = if session.translation.is_some() {
+                                        let target = session.target_lang.clone().unwrap_or_default();
+                                        format!(" · → {target}")
+                                    } else {
+                                        String::new()
+                                    };
+                                    view! {
+                                        <li class="session-item">
+                                            <div class="session-body">
+                                                <p class="session-preview">{preview}</p>
+                                                <p class="session-meta">{language_label}" · "{created_at}{translation_note}</p>
+                                            </div>
+                                            <button
+                                                class="session-delete"
+                                                class:is-confirming=move || pending_delete_id.get().as_deref() == Some(confirm_class_id.as_str())
+                                                on:click=move |_| {
+                                                    if pending_delete_id.get_untracked().as_deref() == Some(delete_id.as_str()) {
+                                                        let id_to_delete = delete_id.clone();
+                                                        pending_delete_id.set(None);
+                                                        spawn_local(async move {
+                                                            let args = DeleteSessionArgs { id: &id_to_delete };
+                                                            if tauri_sys::core::invoke_result::<(), String>("delete_session", args).await.is_ok() {
+                                                                sessions.update(|list| list.retain(|s| s.id != id_to_delete));
+                                                            }
+                                                        });
+                                                    } else {
+                                                        pending_delete_id.set(Some(delete_id.clone()));
+                                                    }
+                                                }
+                                            >
+                                                {move || if pending_delete_id.get().as_deref() == Some(label_id.as_str()) { "Confirm delete?" } else { "Delete" }}
+                                            </button>
+                                        </li>
+                                    }
+                                }).collect_view()}
+                            </ul>
+                        }.into_any()
+                    }
+                }}
+            </section>
 
             <section class="transcript">
                 <h2>"Transcript"</h2>
