@@ -33,7 +33,12 @@
 
 ## Phase 5 — Advanced Features
 - [ ] Speaker diarisation
-- [ ] Export formats (SRT, TXT, DOCX)
+- [ ] Export formats (SRT, TXT, DOCX) *(TXT done — `export_session_txt` command opens a
+      native save dialog and writes the transcript + translation via
+      `tauri-plugin-dialog`/`tauri-plugin-fs`, triggered from an "Export"
+      button per session in Recent Sessions; SRT needs per-segment
+      timestamps we don't currently store, DOCX not started — see
+      `src-tauri/src/commands/storage.rs`)*
 - [ ] API / integrations
 
 ---
