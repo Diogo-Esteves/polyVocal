@@ -107,3 +107,16 @@ reporting one as done, verify the roadmap text still matches reality.
 - Run `cargo fmt`, `cargo clippy -D warnings`, and the full test suite
   before calling backend work done — all three are cheap and CI enforces
   them anyway.
+
+## Human-in-the-loop workflow
+
+Tasks are scoped against `docs/ROADMAP.md` (verified against real code
+first, per above) with the user. Once a task is fully specified — exact
+files, exact behavior, exact tests — mechanical implementation can be
+dispatched to the `implementer` subagent (`.claude/agents/implementer.md`),
+which runs on a cheaper model (Haiku) and reports back rather than
+guessing when a spec is incomplete. The user does QA on the result; git
+operations (commit, push, branch, PR) stay with the orchestrating agent,
+never the implementer. Reserve `implementer` for specced, mechanical work
+— judgment calls (architecture, scope, ambiguous requirements) should be
+reasoned through directly, not delegated to it.
