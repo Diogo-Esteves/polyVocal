@@ -6,7 +6,7 @@
 
 **Fast, local, cross-platform speech-to-text with translation.**
 
-[![CI](https://github.com/diogoe/polyVocal/actions/workflows/ci.yml/badge.svg)](https://github.com/diogoe/polyVocal/actions/workflows/ci.yml)
+[![CI](https://github.com/Diogo-Esteves/polyVocal/actions/workflows/ci.yml/badge.svg)](https://github.com/Diogo-Esteves/polyVocal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-orange?logo=rust)](https://www.rust-lang.org/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri)](https://tauri.app/)
@@ -18,26 +18,26 @@
 
 ---
 
-PolyVocal is a productivity-focused speech-to-text app for professionals, developers, and enterprises. It transcribes your speech locally — no cloud, no accounts, no audio leaving your device — and translates the result on demand.
+PolyVocal is a local, privacy-first speech-to-text and translation app. It transcribes your speech entirely on-device — no cloud, no accounts, no audio ever leaving your machine — and translates the result on demand using local models.
 
 The name and logo draw on the playful image of someone singing into a hairbrush: expressive, immediate, uninhibited.
 
 ---
 
-## ✨ Features
+## Features
 
-- 🎤 **Real-time transcription** — VAD-gated segments fed to Whisper for accurate, low-latency output
-- 🌍 **Auto language detection** — speak English, Portuguese, Spanish (Hindi & Mandarin coming soon)
-- 🔄 **On-demand translation** — local OPUS-MT models via `candle`, no network required
-- 🤖 **Local models only (MVP)** — bring your own models from HuggingFace, no lock-in
-- 🔒 **Privacy first** — audio never leaves your device; transcripts stay local
-- 🖥️ **Cross-platform** — Linux, macOS, Windows
-- ⌨️ **Global hotkey** — trigger recording from any app (opt-in)
-- 🔁 **Sync-ready data model** — cross-device history sync coming in a future release
+- **Real-time transcription** — VAD-gated segments fed to Whisper for accurate, low-latency output
+- **Auto language detection** — speak English, Portuguese, Spanish (Hindi & Mandarin coming soon)
+- **On-demand translation** — local OPUS-MT models via `candle`, no network required
+- **Local models only (MVP)** — bring your own models from HuggingFace, no lock-in
+- **Privacy first** — audio never leaves your device; transcripts stay local
+- **Cross-platform** — Linux, macOS, Windows
+- **Global hotkey** — trigger recording from any app (opt-in)
+- **Sync-ready data model** — cross-device history sync coming in a future release
 
 ---
 
-## 🏗️ Built With
+## Built With
 
 | Layer | Technology |
 |---|---|
@@ -54,7 +54,7 @@ Zero JavaScript. The entire stack — backend and frontend — is Rust.
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 > ⚠️ PolyVocal is in pre-release. Binaries are not yet available. Build from source below.
 
@@ -68,7 +68,7 @@ Zero JavaScript. The entire stack — backend and frontend — is Rust.
 ### Build & Run
 
 ```bash
-git clone https://github.com/diogoe/polyVocal.git
+git clone https://github.com/Diogo-Esteves/polyVocal.git
 cd polyVocal
 cargo tauri dev
 ```
@@ -77,7 +77,7 @@ On first launch, PolyVocal downloads the `tiny` Whisper model (~75 MB). Larger m
 
 ---
 
-## 📦 Models
+## Models
 
 PolyVocal bundles the `tiny` Whisper model. You can download larger models or bring your own from HuggingFace.
 
@@ -91,7 +91,7 @@ PolyVocal bundles the `tiny` Whisper model. You can download larger models or br
 
 ---
 
-## 🌍 Translation
+## Translation
 
 `translate_text` runs a session's transcript through a local **OPUS-MT**
 translation model via [`candle`](https://github.com/huggingface/candle) —
@@ -112,7 +112,7 @@ nothing to install or run yourself.
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
 | Phase | Focus | Status |
 |---|---|---|
@@ -125,7 +125,7 @@ nothing to install or run yourself.
 
 ---
 
-## 📄 Docs
+## Docs
 
 | Document | Description |
 |---|---|
@@ -136,7 +136,7 @@ nothing to install or run yourself.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Bug reports, language quality reports, and feature requests are the most valuable contributions right now. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
@@ -144,9 +144,9 @@ We have a dedicated issue template for **language accuracy reports** — if you'
 
 ---
 
-## 📝 License
+## License
 
-MIT © [Diogo Esteves](https://github.com/diogoe)
+MIT © [Diogo Esteves](https://github.com/Diogo-Esteves)
 
 ---
 
