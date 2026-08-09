@@ -178,8 +178,18 @@ mod icons {
             </svg>
         }
     }
+
+    #[component]
+    pub fn Settings() -> impl IntoView {
+        view! {
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                <circle cx="12" cy="12" r="3"/>
+            </svg>
+        }
+    }
 }
-use icons::{Languages, Mic, Moon, StopSquare, Sun, SunMoon, TriangleAlert};
+use icons::{Languages, Mic, Moon, Settings, StopSquare, Sun, SunMoon, TriangleAlert};
 
 /// Mirrors the `transcript:segment` event payload emitted by the Rust
 /// backend (DEC-007) — only the fields this screen renders are declared;
@@ -207,6 +217,61 @@ struct TranslateArgs<'a> {
 const TARGET_LANGUAGES: [(&str, &str); 3] =
     [("en", "English"), ("pt", "Portuguese"), ("es", "Spanish")];
 
+/// Mirrors `models::registry::ModelSize` — `rename_all = "lowercase"` on the
+/// backend, so this must serialize/deserialize the same way to match.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ModelSize {
+    Tiny,
+    Base,
+    Small,
+    Medium,
+}
+
+impl ModelSize {
+    fn label(self) -> &'static str {
+        match self {
+            ModelSize::Tiny => "Tiny",
+            ModelSize::Base => "Base",
+            ModelSize::Small => "Small",
+            ModelSize::Medium => "Medium",
+        }
+    }
+
+    /// Matches `models::registry::ModelSize::size_mb` in the backend.
+    fn size_mb(self) -> u32 {
+        match self {
+            ModelSize::Tiny => 75,
+            ModelSize::Base => 145,
+            ModelSize::Small => 465,
+            ModelSize::Medium => 1500,
+        }
+    }
+}
+
+/// Mirrors `models::registry::ModelInfo` — a command *return value*,
+/// serialized as-is by the backend's own (unrenamed) `Serialize` impl, so
+/// no `#[serde(rename_all)]` here — unlike the `*Args` structs below, which
+/// are command *arguments* and get auto-camelCased by Tauri.
+#[derive(Deserialize, Clone)]
+struct ModelInfo {
+    size: ModelSize,
+    downloaded: bool,
+    is_active: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadModelArgs {
+    size: ModelSize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SetActiveModelArgs {
+    size: ModelSize,
+}
+
 #[component]
 fn App() -> impl IntoView {
     let theme_mode = RwSignal::new(stored_theme_mode());
@@ -222,6 +287,10 @@ fn App() -> impl IntoView {
     let target_lang = RwSignal::new("pt".to_string());
     let translated_text = RwSignal::new(None::<String>);
     let translating = RwSignal::new(false);
+    let settings_open = RwSignal::new(false);
+    let models = RwSignal::new(Vec::<ModelInfo>::new());
+    let models_loading = RwSignal::new(false);
+    let downloading_size = RwSignal::new(None::<ModelSize>);
 
     // Purely reactive per DEC-007: listen for live transcript segments,
     // never poll a status command.
@@ -291,23 +360,126 @@ fn App() -> impl IntoView {
         });
     };
 
+    let toggle_settings = move |_| {
+        let opening = !settings_open.get_untracked();
+        settings_open.set(opening);
+        if opening {
+            models_loading.set(true);
+            spawn_local(async move {
+                match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ())
+                    .await
+                {
+                    Ok(list) => models.set(list),
+                    Err(e) => error_message.set(Some(e)),
+                }
+                models_loading.set(false);
+            });
+        }
+    };
+
     view! {
         <main class="app">
             <header class="app-header">
                 <h1>"PolyVocal"</h1>
-                <button
-                    class="theme-toggle"
-                    on:click=cycle_theme
-                    title=move || format!("Theme: {} (click to change)", theme_mode.get().label())
-                    aria-label=move || format!("Theme: {}. Click to change.", theme_mode.get().label())
-                >
-                    {move || match theme_mode.get() {
-                        ThemeMode::Auto => view! { <SunMoon/> }.into_any(),
-                        ThemeMode::Light => view! { <Sun/> }.into_any(),
-                        ThemeMode::Dark => view! { <Moon/> }.into_any(),
-                    }}
-                </button>
+                <div class="header-actions">
+                    <button
+                        class="settings-toggle"
+                        class:is-active=move || settings_open.get()
+                        on:click=toggle_settings
+                        title="Settings"
+                        aria-label="Settings"
+                    >
+                        <Settings/>
+                    </button>
+                    <button
+                        class="theme-toggle"
+                        on:click=cycle_theme
+                        title=move || format!("Theme: {} (click to change)", theme_mode.get().label())
+                        aria-label=move || format!("Theme: {}. Click to change.", theme_mode.get().label())
+                    >
+                        {move || match theme_mode.get() {
+                            ThemeMode::Auto => view! { <SunMoon/> }.into_any(),
+                            ThemeMode::Light => view! { <Sun/> }.into_any(),
+                            ThemeMode::Dark => view! { <Moon/> }.into_any(),
+                        }}
+                    </button>
+                </div>
             </header>
+
+            {move || settings_open.get().then(|| view! {
+                <section class="settings">
+                    <h2>"Settings"</h2>
+                    {move || {
+                        if models_loading.get() {
+                            view! { <p class="sessions-empty">"Loading…"</p> }.into_any()
+                        } else {
+                            view! {
+                                <ul class="model-list">
+                                    {models.get().into_iter().map(|model| {
+                                        let size = model.size;
+                                        view! {
+                                            <li class="model-item">
+                                                <div class="model-body">
+                                                    <p class="model-name">
+                                                        {size.label()}" · "{size.size_mb()}" MB"
+                                                    </p>
+                                                </div>
+                                                {if model.is_active {
+                                                    view! { <span class="model-active">"Active"</span> }.into_any()
+                                                } else if model.downloaded {
+                                                    view! {
+                                                        <button
+                                                            class="model-activate"
+                                                            disabled=move || downloading_size.get().is_some()
+                                                            on:click=move |_| {
+                                                                spawn_local(async move {
+                                                                    let args = SetActiveModelArgs { size };
+                                                                    if let Err(e) = tauri_sys::core::invoke_result::<(), String>("set_active_model", args).await {
+                                                                        error_message.set(Some(e));
+                                                                    }
+                                                                    match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ()).await {
+                                                                        Ok(list) => models.set(list),
+                                                                        Err(e) => error_message.set(Some(e)),
+                                                                    }
+                                                                });
+                                                            }
+                                                        >
+                                                            "Activate"
+                                                        </button>
+                                                    }.into_any()
+                                                } else {
+                                                    view! {
+                                                        <button
+                                                            class="model-download"
+                                                            disabled=move || downloading_size.get().is_some()
+                                                            on:click=move |_| {
+                                                                downloading_size.set(Some(size));
+                                                                spawn_local(async move {
+                                                                    let args = DownloadModelArgs { size };
+                                                                    if let Err(e) = tauri_sys::core::invoke_result::<(), String>("download_model", args).await {
+                                                                        error_message.set(Some(e));
+                                                                    }
+                                                                    match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ()).await {
+                                                                        Ok(list) => models.set(list),
+                                                                        Err(e) => error_message.set(Some(e)),
+                                                                    }
+                                                                    downloading_size.set(None);
+                                                                });
+                                                            }
+                                                        >
+                                                            {move || if downloading_size.get() == Some(size) { "Downloading…" } else { "Download" }}
+                                                        </button>
+                                                    }.into_any()
+                                                }}
+                                            </li>
+                                        }
+                                    }).collect_view()}
+                                </ul>
+                            }.into_any()
+                        }
+                    }}
+                </section>
+            })}
 
             <section class="controls">
                 <button

@@ -155,9 +155,21 @@ select:focus-visible {
   color: var(--color-danger-contrast);
 }
 
-.theme-toggle {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.theme-toggle,
+.settings-toggle {
   padding: 0.5rem;
   background: transparent;
+}
+
+.settings-toggle.is-active {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 .controls {
@@ -232,4 +244,39 @@ select {
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
+}
+
+.model-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.model-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: var(--color-surface);
+}
+
+.model-name {
+  margin: 0;
+}
+
+.model-active {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: var(--color-accent);
+}
+
+.model-download,
+.model-activate {
+  flex-shrink: 0;
 }
