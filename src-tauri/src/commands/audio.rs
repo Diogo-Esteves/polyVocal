@@ -134,27 +134,40 @@ pub async fn start_recording(
         let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
         let mut rx = rx;
 
+        let emit_segment = |result: crate::transcription::engine::TranscriptResult| {
+            let start_ms = result.segments.first().map(|s| s.start_ms).unwrap_or(0);
+            let end_ms = result.segments.last().map(|s| s.end_ms).unwrap_or(0);
+            let payload = TranscriptSegmentEvent {
+                session_id: transcription_session_id.to_string(),
+                text: result.text,
+                language: result.language,
+                start_ms,
+                end_ms,
+            };
+            if let Err(e) = app.emit("transcript:segment", &payload) {
+                tracing::error!("failed to emit transcript:segment: {e}");
+            }
+        };
+
         while let Some(chunk) = rx.recv().await {
             for frame in chunker.push(&chunk) {
                 match pipeline.push_frame(&frame) {
-                    Ok(Some(result)) => {
-                        let start_ms = result.segments.first().map(|s| s.start_ms).unwrap_or(0);
-                        let end_ms = result.segments.last().map(|s| s.end_ms).unwrap_or(0);
-                        let payload = TranscriptSegmentEvent {
-                            session_id: transcription_session_id.to_string(),
-                            text: result.text,
-                            language: result.language,
-                            start_ms,
-                            end_ms,
-                        };
-                        if let Err(e) = app.emit("transcript:segment", &payload) {
-                            tracing::error!("failed to emit transcript:segment: {e}");
-                        }
-                    }
+                    Ok(Some(result)) => emit_segment(result),
                     Ok(None) => {}
                     Err(e) => tracing::error!("transcription pipeline error: {e}"),
                 }
             }
+        }
+
+        // The capture stream stopped — recording was told to stop, likely
+        // right after the last word, before the usual trailing-silence
+        // hangover had a chance to close the segment naturally. Flush
+        // whatever's left so it isn't silently dropped (see
+        // RecordingPipeline::flush).
+        match pipeline.flush() {
+            Ok(Some(result)) => emit_segment(result),
+            Ok(None) => {}
+            Err(e) => tracing::error!("transcription pipeline error on flush: {e}"),
         }
 
         pipeline.finish()

@@ -55,6 +55,23 @@ impl<V: VoiceActivityScorer, E: Transcriber> RecordingPipeline<V, E> {
         Ok(None)
     }
 
+    /// Force-closes and transcribes any in-progress speech segment.
+    ///
+    /// Callers use this when the audio stream ends before the usual
+    /// trailing-silence hangover naturally closes the segment (see
+    /// `SpeechSegmenter::flush`) — e.g. recording stops right after the
+    /// last word. Without this, that final utterance is silently dropped:
+    /// `push_frame` only closes (and transcribes) a segment once enough
+    /// trailing silence has actually arrived.
+    pub fn flush(&mut self) -> Result<Option<TranscriptResult>> {
+        let Some(segment) = self.segmenter.flush() else {
+            return Ok(None);
+        };
+        let result = self.engine.transcribe(&segment.samples)?;
+        self.session.append(&result.text, &result.language);
+        Ok(Some(result))
+    }
+
     /// The session accumulated so far.
     pub fn session(&self) -> &TranscriptionSession {
         &self.session
@@ -144,6 +161,43 @@ mod tests {
         // actually closed a segment and handed it to the engine.
         assert_eq!(pipeline.session().detected_language.as_deref(), Some("en"));
         assert_eq!(pipeline.session().transcript, "hello");
+    }
+
+    #[test]
+    fn test_flush_transcribes_in_progress_segment() {
+        // Speech throughout, never enough trailing silence to close
+        // naturally — mirrors stopping recording right after talking.
+        let scorer = ScriptedScorer::new(vec![0.9, 0.9, 0.9]);
+        let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
+
+        let frame = vec![0.1f32; 4];
+        for _ in 0..3 {
+            let result = pipeline.push_frame(&frame).unwrap();
+            assert!(result.is_none(), "segment shouldn't close without silence");
+        }
+        assert!(pipeline.session().transcript.is_empty());
+
+        let flushed = pipeline
+            .flush()
+            .unwrap()
+            .expect("in-progress speech should flush");
+        assert_eq!(flushed.text, "hello");
+        assert_eq!(pipeline.session().transcript, "hello");
+        assert_eq!(pipeline.session().detected_language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn test_flush_is_none_when_nothing_in_progress() {
+        let scorer = ScriptedScorer::new(vec![0.0; 2]);
+        let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
+
+        let frame = vec![0.0f32; 4];
+        pipeline.push_frame(&frame).unwrap();
+        pipeline.push_frame(&frame).unwrap();
+
+        assert!(pipeline.flush().unwrap().is_none());
     }
 
     #[test]
