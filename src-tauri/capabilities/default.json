@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Baseline capability for the main window — grants the core APIs the frontend actually calls directly (event listen, primarily).",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
