@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Baseline capability for the main window — grants the core APIs the frontend actually calls directly (event listen, primarily).","local":true,"windows":["main"],"permissions":["core:default"]}}
