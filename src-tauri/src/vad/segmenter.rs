@@ -75,6 +75,22 @@ impl<V: VoiceActivityScorer> SpeechSegmenter<V> {
 
         Ok(None)
     }
+
+    /// Force-closes an in-progress speech segment without waiting for the
+    /// usual trailing-silence hangover — e.g. when recording is stopped
+    /// right after the last word, before `min_silence_frames` of silence
+    /// has had a chance to arrive naturally. Returns `None` if no speech
+    /// was in progress (plain silence, or nothing pushed since the last
+    /// segment closed).
+    pub fn flush(&mut self) -> Option<SpeechSegment> {
+        if !self.in_speech || self.buffer.is_empty() {
+            return None;
+        }
+        self.in_speech = false;
+        self.silence_run = 0;
+        let samples = std::mem::take(&mut self.buffer);
+        Some(SpeechSegment { samples })
+    }
 }
 
 #[cfg(test)]
@@ -161,5 +177,54 @@ mod tests {
 
         // Only the speech frame + 2 hangover frames (12 samples) — no leading silence.
         assert_eq!(segment.samples.len(), 12);
+    }
+
+    #[test]
+    fn test_flush_returns_in_progress_speech() {
+        // Speech throughout, never enough trailing silence to close
+        // naturally — e.g. the user stops recording right after talking.
+        let scores = vec![0.9, 0.9, 0.9];
+        let scorer = ScriptedScorer::new(scores);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+
+        let frame = vec![1.0f32; 4];
+        for _ in 0..3 {
+            assert_eq!(segmenter.push(&frame).unwrap(), None);
+        }
+
+        let flushed = segmenter.flush().expect("in-progress speech should flush");
+        assert_eq!(flushed.samples.len(), 12);
+    }
+
+    #[test]
+    fn test_flush_is_none_when_nothing_in_progress() {
+        let scorer = ScriptedScorer::new(vec![0.0; 2]);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+
+        // Plain silence: nothing ever entered speech.
+        let frame = vec![0.0f32; 4];
+        segmenter.push(&frame).unwrap();
+        segmenter.push(&frame).unwrap();
+
+        assert_eq!(segmenter.flush(), None);
+    }
+
+    #[test]
+    fn test_flush_after_natural_close_is_none() {
+        let scores = vec![0.9, 0.9, 0.0, 0.0];
+        let scorer = ScriptedScorer::new(scores);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+
+        let frame = vec![1.0f32; 4];
+        let mut closed = None;
+        for _ in 0..4 {
+            if let Some(segment) = segmenter.push(&frame).unwrap() {
+                closed = Some(segment);
+            }
+        }
+        assert!(closed.is_some(), "segment should have closed naturally");
+
+        // Nothing left in progress after a natural close.
+        assert_eq!(segmenter.flush(), None);
     }
 }
