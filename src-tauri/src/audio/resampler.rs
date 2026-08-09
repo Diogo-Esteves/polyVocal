@@ -79,35 +79,52 @@ impl AudioResampler {
         })
     }
 
-    /// Resample audio from input rate to 16 kHz.
+    /// Resample mono audio from input rate to 16 kHz.
     ///
-    /// Takes raw f32 samples at input rate, returns resampled f32 samples at 16 kHz.
+    /// Takes raw mono f32 samples at input rate, returns resampled f32
+    /// samples at 16 kHz. Callers must down-mix multi-channel input to mono
+    /// first — `rubato`'s `FastFixedIn` is single-"channel"-vec here by
+    /// construction, so feeding it interleaved multi-channel data would
+    /// mismatch its configured channel count and fail on every call.
+    ///
+    /// `rubato`'s fixed-input resampler needs its input in exact
+    /// `chunk_size`-frame pieces, but the OS/device decides how many frames
+    /// land in each callback (rarely a multiple of `chunk_size`) — so
+    /// incoming samples are accumulated in `self.buffer` and only handed to
+    /// the resampler once a full chunk is available; any leftover carries
+    /// over to the next call instead of being dropped.
     ///
     /// # Arguments
-    /// * `input` - Raw audio samples at input sample rate
+    /// * `input` - Raw mono audio samples at input sample rate
     ///
     /// # Returns
-    /// Resampled audio at 16 kHz, or error if resampling fails.
+    /// Resampled audio at 16 kHz (possibly empty, if not enough input has
+    /// accumulated yet to fill a full chunk), or error if resampling fails.
     pub fn resample(&mut self, input: &[f32]) -> Result<Vec<f32>> {
         if input.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Prepare input as per rubato's expectations: Vec<Vec<f32>> where outer vec is channels
-        let input_data = vec![input.to_vec()];
+        self.buffer.extend_from_slice(input);
 
-        // Resample
-        let output_data = self
-            .resampler
-            .process(&input_data, None)
-            .map_err(|e| anyhow!(AudioError::ResamplingFailed(format!("{:?}", e))))?;
+        let chunk_size = self.resampler.input_frames_next();
+        let mut output = Vec::new();
 
-        // Flatten output (should be single channel) into a Vec<f32>
-        if output_data.is_empty() || output_data[0].is_empty() {
-            return Ok(Vec::new());
+        while self.buffer.len() >= chunk_size {
+            let chunk: Vec<f32> = self.buffer.drain(..chunk_size).collect();
+            let input_data = vec![chunk];
+
+            let output_data = self
+                .resampler
+                .process(&input_data, None)
+                .map_err(|e| anyhow!(AudioError::ResamplingFailed(format!("{:?}", e))))?;
+
+            if let Some(channel_out) = output_data.into_iter().next() {
+                output.extend(channel_out);
+            }
         }
 
-        Ok(output_data[0].clone())
+        Ok(output)
     }
 
     /// Get the input sample rate.
@@ -211,5 +228,31 @@ mod tests {
 
         let output = resampler.resample(&[]).unwrap();
         assert_eq!(output.len(), 0);
+    }
+
+    /// Regression test: real cpal callbacks rarely deliver exactly
+    /// `chunk_size` frames — sizes far smaller than a full chunk (as small
+    /// as a few dozen samples per callback on some devices) used to error
+    /// out of `resample()` entirely (silently swallowed by callers), so no
+    /// audio ever reached the VAD/transcription pipeline. Feeding many
+    /// small pieces must accumulate across calls and eventually produce
+    /// output, not error or silently drop everything.
+    #[test]
+    fn test_resample_accumulates_small_chunks_without_error() {
+        let mut resampler = AudioResampler::new(48000, 16000, 1).unwrap();
+
+        let mut total_output = Vec::new();
+        // 100 calls of 50 samples each = 5000 samples, well over one
+        // 16ms/48kHz chunk (768 samples), but each individual call is far
+        // smaller than a full chunk.
+        for _ in 0..100 {
+            let small_piece = vec![0.1f32; 50];
+            total_output.extend(resampler.resample(&small_piece).unwrap());
+        }
+
+        assert!(
+            !total_output.is_empty(),
+            "accumulated small chunks should eventually produce resampled output"
+        );
     }
 }

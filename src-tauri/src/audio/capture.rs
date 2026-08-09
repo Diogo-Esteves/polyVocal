@@ -20,6 +20,22 @@ fn u16_to_f32(samples: &[u16]) -> Vec<f32> {
         .collect()
 }
 
+/// Down-mix interleaved multi-channel samples to mono by averaging each
+/// frame's channels. `AudioResampler` is always constructed for 1 channel
+/// (see `start_blocking`), so multi-channel devices — e.g. most USB
+/// webcam/headset mics, which report 2 channels — must be collapsed to
+/// mono before reaching it, or every `resample()` call fails with a
+/// channel-count mismatch.
+fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
+    if channels <= 1 {
+        return samples.to_vec();
+    }
+    samples
+        .chunks_exact(channels)
+        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+        .collect()
+}
+
 /// Handle to an active audio capture session.
 pub struct AudioCapture {
     tx: mpsc::Sender<Vec<f32>>,
@@ -68,12 +84,10 @@ impl AudioCapture {
         let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
 
-        // Create resampler for this device's input rate
-        let resampler = Arc::new(Mutex::new(AudioResampler::new(
-            sample_rate,
-            16000,
-            channels,
-        )?));
+        // Create resampler for this device's input rate. Always mono (1),
+        // regardless of the device's actual channel count — the capture
+        // callbacks below down-mix to mono before ever calling resample().
+        let resampler = Arc::new(Mutex::new(AudioResampler::new(sample_rate, 16000, 1)?));
 
         // Create mpsc channel for resampled frames
         let (tx, rx) = mpsc::channel(64);
@@ -81,13 +95,13 @@ impl AudioCapture {
         // Build stream based on sample format
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
-                Self::build_f32_stream(&device, &config, tx.clone(), resampler.clone())?
+                Self::build_f32_stream(&device, &config, tx.clone(), resampler.clone(), channels)?
             }
             cpal::SampleFormat::I16 => {
-                Self::build_i16_stream(&device, &config, tx.clone(), resampler.clone())?
+                Self::build_i16_stream(&device, &config, tx.clone(), resampler.clone(), channels)?
             }
             cpal::SampleFormat::U16 => {
-                Self::build_u16_stream(&device, &config, tx.clone(), resampler.clone())?
+                Self::build_u16_stream(&device, &config, tx.clone(), resampler.clone(), channels)?
             }
             _ => {
                 return Err(anyhow!(
@@ -113,13 +127,15 @@ impl AudioCapture {
         config: &cpal::SupportedStreamConfig,
         tx: mpsc::Sender<Vec<f32>>,
         resampler: Arc<Mutex<AudioResampler>>,
+        channels: usize,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
             &stream_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let mono = downmix_to_mono(data, channels);
                 if let Ok(mut resampler) = resampler.lock() {
-                    if let Ok(resampled) = resampler.resample(data) {
+                    if let Ok(resampled) = resampler.resample(&mono) {
                         if !resampled.is_empty() {
                             let _ = tx.try_send(resampled);
                         }
@@ -137,14 +153,16 @@ impl AudioCapture {
         config: &cpal::SupportedStreamConfig,
         tx: mpsc::Sender<Vec<f32>>,
         resampler: Arc<Mutex<AudioResampler>>,
+        channels: usize,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
             &stream_config,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
                 let f32_samples = i16_to_f32(data);
+                let mono = downmix_to_mono(&f32_samples, channels);
                 if let Ok(mut resampler) = resampler.lock() {
-                    if let Ok(resampled) = resampler.resample(&f32_samples) {
+                    if let Ok(resampled) = resampler.resample(&mono) {
                         if !resampled.is_empty() {
                             let _ = tx.try_send(resampled);
                         }
@@ -162,14 +180,16 @@ impl AudioCapture {
         config: &cpal::SupportedStreamConfig,
         tx: mpsc::Sender<Vec<f32>>,
         resampler: Arc<Mutex<AudioResampler>>,
+        channels: usize,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
             &stream_config,
             move |data: &[u16], _: &cpal::InputCallbackInfo| {
                 let f32_samples = u16_to_f32(data);
+                let mono = downmix_to_mono(&f32_samples, channels);
                 if let Ok(mut resampler) = resampler.lock() {
-                    if let Ok(resampled) = resampler.resample(&f32_samples) {
+                    if let Ok(resampled) = resampler.resample(&mono) {
                         if !resampled.is_empty() {
                             let _ = tx.try_send(resampled);
                         }
@@ -226,5 +246,19 @@ mod tests {
         if let Err(e) = result {
             assert!(e.to_string().contains("Audio device not found"));
         }
+    }
+
+    #[test]
+    fn test_downmix_mono_passthrough() {
+        let samples = vec![0.1, -0.2, 0.3];
+        assert_eq!(downmix_to_mono(&samples, 1), samples);
+    }
+
+    #[test]
+    fn test_downmix_stereo_averages_channels() {
+        // Interleaved L/R: frame 0 = (1.0, 0.0), frame 1 = (0.0, -1.0).
+        let interleaved = vec![1.0, 0.0, 0.0, -1.0];
+        let mono = downmix_to_mono(&interleaved, 2);
+        assert_eq!(mono, vec![0.5, -0.5]);
     }
 }
