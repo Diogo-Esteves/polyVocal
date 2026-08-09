@@ -7,7 +7,7 @@ pub mod transcription;
 mod translation;
 pub mod vad;
 
-use tracing::info;
+use tracing::{info, warn};
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -50,6 +50,18 @@ pub fn run() {
                     .await
                     .expect("failed to initialise database");
             });
+
+            // Best-effort: a fresh install can't transcribe until some model
+            // is active, so provision the small `tiny` one automatically.
+            // Never fatal — e.g. offline on first launch — the app still
+            // opens, just with the existing "no active model" error path.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = commands::models::ensure_default_model(&app_handle).await {
+                    warn!("failed to provision default Whisper model: {e}");
+                }
+            });
+
             Ok(())
         })
         .run(tauri::generate_context!())
