@@ -1,6 +1,6 @@
 use crate::models::downloader::{ModelDownloader, ReqwestDownloader};
 use crate::models::manager::ModelManager;
-use crate::models::registry::{ModelInfo, ModelSize};
+use crate::models::registry::{ModelInfo, ModelSize, VadModel};
 use tauri::{AppHandle, Manager};
 
 fn model_manager(app: &AppHandle) -> Result<ModelManager, String> {
@@ -36,7 +36,7 @@ pub async fn set_active_model(app: AppHandle, size: ModelSize) -> Result<(), Str
 /// already active — so a fresh install can transcribe immediately, without
 /// requiring a trip to Settings first. A no-op on every later launch, once
 /// any model (not necessarily `tiny`) has been activated.
-async fn ensure_default_model_with<D: ModelDownloader>(
+async fn ensure_default_whisper_model<D: ModelDownloader>(
     manager: &ModelManager,
     downloader: &D,
 ) -> Result<(), String> {
@@ -53,9 +53,38 @@ async fn ensure_default_model_with<D: ModelDownloader>(
         .map_err(|e| e.to_string())
 }
 
-pub async fn ensure_default_model(app: &AppHandle) -> Result<(), String> {
+/// Ensures both models `start_recording` requires are on disk: the Silero
+/// VAD model (a fixed pipeline component, not user-selectable — see
+/// `registry::VadModel`, so it's never surfaced in Settings and just needs
+/// to exist) and a default Whisper model. Both are attempted even if one
+/// fails, since they're independent prerequisites.
+async fn ensure_default_models_with<D: ModelDownloader>(
+    manager: &ModelManager,
+    downloader: &D,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+
+    if let Err(e) = manager
+        .ensure_vad_model(&VadModel::Silero, downloader)
+        .await
+    {
+        errors.push(format!("VAD model: {e}"));
+    }
+
+    if let Err(e) = ensure_default_whisper_model(manager, downloader).await {
+        errors.push(format!("Whisper model: {e}"));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+pub async fn ensure_default_models(app: &AppHandle) -> Result<(), String> {
     let manager = model_manager(app)?;
-    ensure_default_model_with(&manager, &ReqwestDownloader).await
+    ensure_default_models_with(&manager, &ReqwestDownloader).await
 }
 
 #[cfg(test)]
@@ -108,12 +137,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_default_model_downloads_and_activates_tiny_when_none_active() {
-        let dir = temp_models_dir("polyvocal_test_ensure_default_fresh");
+    async fn ensure_default_whisper_model_downloads_and_activates_tiny_when_none_active() {
+        let dir = temp_models_dir("polyvocal_test_ensure_default_whisper_fresh");
         let manager = ModelManager::new(dir);
         let downloader = FakeDownloader::success(b"fake tiny model");
 
-        ensure_default_model_with(&manager, &downloader)
+        ensure_default_whisper_model(&manager, &downloader)
             .await
             .unwrap();
 
@@ -122,8 +151,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_default_model_is_noop_when_a_model_is_already_active() {
-        let dir = temp_models_dir("polyvocal_test_ensure_default_existing");
+    async fn ensure_default_whisper_model_is_noop_when_a_model_is_already_active() {
+        let dir = temp_models_dir("polyvocal_test_ensure_default_whisper_existing");
         let manager = ModelManager::new(dir);
         let downloader = FakeDownloader::success(b"fake base model");
 
@@ -134,12 +163,50 @@ mod tests {
             .unwrap();
         manager.set_active(&ModelSize::Base).unwrap();
 
-        ensure_default_model_with(&manager, &downloader)
+        ensure_default_whisper_model(&manager, &downloader)
             .await
             .unwrap();
 
         // No further downloads, and the pre-existing choice is left alone.
         assert_eq!(downloader.call_count(), 1);
         assert!(manager.is_active(&ModelSize::Base));
+    }
+
+    #[tokio::test]
+    async fn ensure_default_models_also_provisions_the_vad_model() {
+        let dir = temp_models_dir("polyvocal_test_ensure_default_models_vad");
+        let manager = ModelManager::new(dir);
+        let downloader = FakeDownloader::success(b"fake model bytes");
+
+        ensure_default_models_with(&manager, &downloader)
+            .await
+            .unwrap();
+
+        assert!(manager.vad_model_path(&VadModel::Silero).exists());
+        assert!(manager.is_active(&ModelSize::Tiny));
+        // One call for the VAD model, one for tiny Whisper.
+        assert_eq!(downloader.call_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn ensure_default_models_still_provisions_vad_when_whisper_already_active() {
+        let dir = temp_models_dir("polyvocal_test_ensure_default_models_vad_only");
+        let manager = ModelManager::new(dir);
+        let downloader = FakeDownloader::success(b"fake model bytes");
+
+        manager
+            .download(&ModelSize::Base, &downloader)
+            .await
+            .unwrap();
+        manager.set_active(&ModelSize::Base).unwrap();
+
+        ensure_default_models_with(&manager, &downloader)
+            .await
+            .unwrap();
+
+        assert!(manager.vad_model_path(&VadModel::Silero).exists());
+        // The pre-seed Base download, plus one for the VAD model — no
+        // further Whisper download since Base is already active.
+        assert_eq!(downloader.call_count(), 2);
     }
 }
