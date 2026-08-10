@@ -541,9 +541,12 @@ fn App() -> impl IntoView {
                         on:click=do_translate
                         disabled=move || session_id.get().is_none() || translating.get()
                     >
-                        "Translate"
+                        {move || if translating.get() { "Translating…" } else { "Translate" }}
                     </button>
                 </div>
+                {move || translating.get().then(|| view! {
+                    <p class="translate-status">"Running locally — usually a few seconds, longer the first time a language pair's model needs downloading."</p>
+                })}
                 <p class="translated">{move || translated_text.get().unwrap_or_default()}</p>
             </section>
         </main>
