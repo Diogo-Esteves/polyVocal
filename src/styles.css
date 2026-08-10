@@ -227,6 +227,12 @@ select:focus-visible {
   min-height: 2rem;
 }
 
+.translate-status {
+  margin: 0.5rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
 .error {
   display: flex;
   align-items: center;
