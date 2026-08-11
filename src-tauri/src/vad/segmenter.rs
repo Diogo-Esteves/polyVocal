@@ -19,13 +19,18 @@ pub struct SpeechSegment {
 /// Buffers scored PCM frames into complete speech segments.
 ///
 /// A segment starts on the first frame scoring at/above `threshold` and ends
-/// once `min_silence_frames` consecutive frames score below it.
+/// once `min_silence_frames` consecutive frames score below it, or once
+/// `max_segment_frames` total frames have been buffered — whichever comes
+/// first (issue #47: without a cap, a speaker who never pauses grows the
+/// buffer and transcript latency without bound).
 pub struct SpeechSegmenter<V: VoiceActivityScorer> {
     scorer: V,
     threshold: f32,
     min_silence_frames: usize,
+    max_segment_frames: usize,
     in_speech: bool,
     silence_run: usize,
+    frames_in_segment: usize,
     buffer: Vec<f32>,
 }
 
@@ -34,13 +39,22 @@ impl<V: VoiceActivityScorer> SpeechSegmenter<V> {
     /// * `scorer` - speech-probability scorer for individual frames
     /// * `threshold` - minimum score to treat a frame as speech
     /// * `min_silence_frames` - consecutive silent frames required to close a segment
-    pub fn new(scorer: V, threshold: f32, min_silence_frames: usize) -> Self {
+    /// * `max_segment_frames` - force-close a segment after this many frames
+    ///   total, even without trailing silence
+    pub fn new(
+        scorer: V,
+        threshold: f32,
+        min_silence_frames: usize,
+        max_segment_frames: usize,
+    ) -> Self {
         Self {
             scorer,
             threshold,
             min_silence_frames,
+            max_segment_frames,
             in_speech: false,
             silence_run: 0,
+            frames_in_segment: 0,
             buffer: Vec::new(),
         }
     }
@@ -48,14 +62,20 @@ impl<V: VoiceActivityScorer> SpeechSegmenter<V> {
     /// Feed one frame of 16 kHz mono f32 PCM.
     ///
     /// Returns a completed `SpeechSegment` once enough trailing silence has
-    /// been observed after speech; otherwise `None`.
+    /// been observed after speech, or once the segment hits
+    /// `max_segment_frames`; otherwise `None`.
     pub fn push(&mut self, frame: &[f32]) -> Result<Option<SpeechSegment>> {
         let score = self.scorer.score(frame)?;
 
         if score >= self.threshold {
             self.in_speech = true;
             self.silence_run = 0;
+            self.frames_in_segment += 1;
             self.buffer.extend_from_slice(frame);
+
+            if self.frames_in_segment >= self.max_segment_frames {
+                return Ok(Some(self.close_segment()));
+            }
             return Ok(None);
         }
 
@@ -64,13 +84,13 @@ impl<V: VoiceActivityScorer> SpeechSegmenter<V> {
         }
 
         self.silence_run += 1;
+        self.frames_in_segment += 1;
         self.buffer.extend_from_slice(frame);
 
-        if self.silence_run >= self.min_silence_frames {
-            self.in_speech = false;
-            self.silence_run = 0;
-            let samples = std::mem::take(&mut self.buffer);
-            return Ok(Some(SpeechSegment { samples }));
+        if self.silence_run >= self.min_silence_frames
+            || self.frames_in_segment >= self.max_segment_frames
+        {
+            return Ok(Some(self.close_segment()));
         }
 
         Ok(None)
@@ -86,10 +106,15 @@ impl<V: VoiceActivityScorer> SpeechSegmenter<V> {
         if !self.in_speech || self.buffer.is_empty() {
             return None;
         }
+        Some(self.close_segment())
+    }
+
+    fn close_segment(&mut self) -> SpeechSegment {
         self.in_speech = false;
         self.silence_run = 0;
+        self.frames_in_segment = 0;
         let samples = std::mem::take(&mut self.buffer);
-        Some(SpeechSegment { samples })
+        SpeechSegment { samples }
     }
 }
 
@@ -122,7 +147,7 @@ mod tests {
     #[test]
     fn test_silence_produces_no_segment() {
         let scorer = ScriptedScorer::new(vec![0.0; 5]);
-        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2, 100);
 
         let frame = vec![0.0f32; 10];
         for _ in 0..5 {
@@ -135,7 +160,7 @@ mod tests {
         // 3 speech frames, then 3 silence frames; hangover = 2.
         let scores = vec![0.9, 0.9, 0.9, 0.0, 0.0, 0.0];
         let scorer = ScriptedScorer::new(scores);
-        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2, 100);
 
         let frames: Vec<Vec<f32>> = (0..6).map(|i| vec![i as f32; 4]).collect();
 
@@ -159,7 +184,7 @@ mod tests {
     fn test_silence_before_any_speech_is_discarded() {
         let scores = vec![0.0, 0.0, 0.9, 0.0, 0.0];
         let scorer = ScriptedScorer::new(scores);
-        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2, 100);
 
         let frame = vec![1.0f32; 4];
 
@@ -185,7 +210,7 @@ mod tests {
         // naturally — e.g. the user stops recording right after talking.
         let scores = vec![0.9, 0.9, 0.9];
         let scorer = ScriptedScorer::new(scores);
-        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2, 100);
 
         let frame = vec![1.0f32; 4];
         for _ in 0..3 {
@@ -199,7 +224,7 @@ mod tests {
     #[test]
     fn test_flush_is_none_when_nothing_in_progress() {
         let scorer = ScriptedScorer::new(vec![0.0; 2]);
-        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2, 100);
 
         // Plain silence: nothing ever entered speech.
         let frame = vec![0.0f32; 4];
@@ -213,7 +238,7 @@ mod tests {
     fn test_flush_after_natural_close_is_none() {
         let scores = vec![0.9, 0.9, 0.0, 0.0];
         let scorer = ScriptedScorer::new(scores);
-        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2, 100);
 
         let frame = vec![1.0f32; 4];
         let mut closed = None;
@@ -225,6 +250,29 @@ mod tests {
         assert!(closed.is_some(), "segment should have closed naturally");
 
         // Nothing left in progress after a natural close.
+        assert_eq!(segmenter.flush(), None);
+    }
+
+    #[test]
+    fn test_max_segment_frames_force_closes_without_silence() {
+        // Continuous speech, never a single silent frame — only the cap
+        // should close this segment.
+        let scores = vec![0.9; 5];
+        let scorer = ScriptedScorer::new(scores);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2, 5);
+
+        let frame = vec![1.0f32; 4];
+        let mut produced = None;
+        for _ in 0..5 {
+            if let Some(segment) = segmenter.push(&frame).unwrap() {
+                produced = Some(segment);
+            }
+        }
+
+        let segment = produced.expect("segment should force-close at the frame cap");
+        assert_eq!(segment.samples.len(), 20); // 5 frames * 4 samples
+
+        // The segmenter should be ready to start a fresh segment immediately.
         assert_eq!(segmenter.flush(), None);
     }
 }
