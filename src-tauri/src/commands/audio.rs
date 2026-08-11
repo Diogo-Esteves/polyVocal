@@ -21,6 +21,11 @@ use tokio::task::JoinHandle;
 const VAD_THRESHOLD: f32 = 0.5;
 /// Consecutive silent frames required to close a speech segment (~320ms at 32ms/frame).
 const VAD_MIN_SILENCE_FRAMES: usize = 10;
+/// Force-closes a segment after this many frames even without trailing
+/// silence — ~30s at 32ms/frame (SILERO_FRAME_SIZE=512 samples @16kHz),
+/// matching whisper.cpp's own context window. Bounds memory growth and
+/// transcript latency for continuous speech (issue #47).
+const VAD_MAX_SEGMENT_FRAMES: usize = 938;
 
 /// A recording in progress.
 ///
@@ -96,8 +101,13 @@ pub async fn start_recording(
     // same as the Whisper model above.
     let silero_path = manager.vad_model_path(&VadModel::Silero);
     let scorer = SileroVad::load(silero_path).map_err(|e| e.to_string())?;
-    let segmenter = SpeechSegmenter::new(scorer, VAD_THRESHOLD, VAD_MIN_SILENCE_FRAMES);
-    let pipeline = RecordingPipeline::new(segmenter, engine);
+    let segmenter = SpeechSegmenter::new(
+        scorer,
+        VAD_THRESHOLD,
+        VAD_MIN_SILENCE_FRAMES,
+        VAD_MAX_SEGMENT_FRAMES,
+    );
+    let pipeline = RecordingPipeline::new(segmenter);
     // `Uuid` is `Copy`, so capturing it below (for the emitted events) doesn't
     // consume this — it's also used after the task finishes to give the
     // persisted session the same id the frontend saw in live events.
@@ -131,16 +141,17 @@ pub async fn start_recording(
 
     let task = tokio::spawn(async move {
         let mut pipeline = pipeline;
+        let mut engine = engine;
         let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
         let mut rx = rx;
 
-        let emit_segment = |result: crate::transcription::engine::TranscriptResult| {
+        let emit_segment = |result: &crate::transcription::engine::TranscriptResult| {
             let start_ms = result.segments.first().map(|s| s.start_ms).unwrap_or(0);
             let end_ms = result.segments.last().map(|s| s.end_ms).unwrap_or(0);
             let payload = TranscriptSegmentEvent {
                 session_id: transcription_session_id.to_string(),
-                text: result.text,
-                language: result.language,
+                text: result.text.clone(),
+                language: result.language.clone(),
                 start_ms,
                 end_ms,
             };
@@ -152,7 +163,22 @@ pub async fn start_recording(
         while let Some(chunk) = rx.recv().await {
             for frame in chunker.push(&chunk) {
                 match pipeline.push_frame(&frame) {
-                    Ok(Some(result)) => emit_segment(result),
+                    Ok(Some(samples)) => {
+                        let Some((returned_engine, transcribe_result)) =
+                            transcribe_segment(engine, samples).await
+                        else {
+                            tracing::error!("transcription task panicked — ending recording early");
+                            return pipeline.finish();
+                        };
+                        engine = returned_engine;
+                        match transcribe_result {
+                            Ok(result) => {
+                                pipeline.record_transcript(&result.text, &result.language);
+                                emit_segment(&result);
+                            }
+                            Err(e) => tracing::error!("transcription pipeline error: {e}"),
+                        }
+                    }
                     Ok(None) => {}
                     Err(e) => tracing::error!("transcription pipeline error: {e}"),
                 }
@@ -164,10 +190,17 @@ pub async fn start_recording(
         // hangover had a chance to close the segment naturally. Flush
         // whatever's left so it isn't silently dropped (see
         // RecordingPipeline::flush).
-        match pipeline.flush() {
-            Ok(Some(result)) => emit_segment(result),
-            Ok(None) => {}
-            Err(e) => tracing::error!("transcription pipeline error on flush: {e}"),
+        if let Some(samples) = pipeline.flush() {
+            match transcribe_segment(engine, samples).await {
+                Some((_, Ok(result))) => {
+                    pipeline.record_transcript(&result.text, &result.language);
+                    emit_segment(&result);
+                }
+                Some((_, Err(e))) => {
+                    tracing::error!("transcription pipeline error on flush: {e}")
+                }
+                None => tracing::error!("transcription task panicked during flush"),
+            }
         }
 
         pipeline.finish()
@@ -257,6 +290,36 @@ async fn finish_recording(
     repository.save(&record).await.map_err(|e| e.to_string())?;
 
     Ok(record.id)
+}
+
+/// Transcribes off the async executor (DEC-006) — Whisper inference is
+/// CPU-bound and can take real time; running it inline on the task that
+/// also drains the capture channel would block that drain for the
+/// duration, and the channel (64-frame capacity, ~1s of headroom) would
+/// silently drop audio while blocked (issue #45).
+///
+/// Takes and returns ownership of `engine` across the `spawn_blocking`
+/// boundary — round-tripped per segment rather than held for the whole
+/// recording — since `spawn_blocking` requires a `'static` closure and
+/// `TranscriptionEngine` can't be shared by reference across it without
+/// wrapping in `Arc`.
+///
+/// Returns `None` only if the blocking task itself panicked, which loses
+/// the engine — an unrecoverable state the caller handles by ending the
+/// recording early.
+async fn transcribe_segment(
+    engine: TranscriptionEngine,
+    samples: Vec<f32>,
+) -> Option<(
+    TranscriptionEngine,
+    Result<crate::transcription::engine::TranscriptResult, String>,
+)> {
+    tokio::task::spawn_blocking(move || {
+        let result = engine.transcribe(&samples).map_err(|e| e.to_string());
+        (engine, result)
+    })
+    .await
+    .ok()
 }
 
 #[cfg(test)]
