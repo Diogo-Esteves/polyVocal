@@ -7,7 +7,8 @@ pub mod transcription;
 mod translation;
 pub mod vad;
 
-use tracing::{info, warn};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tracing::{error, info, warn};
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -45,12 +46,27 @@ pub fn run() {
             commands::models::set_active_model,
         ])
         .setup(|app| {
+            // Blocking (not spawned): every #[tauri::command] that takes
+            // State<'_, SqlitePool> needs app.manage(pool) to have already
+            // happened — a spawned task raced the frontend's own mount-time
+            // commands (see issue #48). DB init failure is unrecoverable
+            // (DEC-014 tier 3): show a blocking dialog and exit cleanly
+            // instead of the previous `.expect()`, which silently aborted
+            // the whole process in release builds.
             let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                storage::db::initialise(&app_handle)
-                    .await
-                    .expect("failed to initialise database");
-            });
+            if let Err(e) = tauri::async_runtime::block_on(storage::db::initialise(&app_handle)) {
+                error!("failed to initialise database: {e}");
+                app_handle
+                    .dialog()
+                    .message(format!(
+                        "PolyVocal couldn't start because the local database \
+                         could not be opened:\n\n{e}"
+                    ))
+                    .title("Database Error")
+                    .kind(MessageDialogKind::Error)
+                    .blocking_show();
+                std::process::exit(1);
+            }
 
             // Best-effort: a fresh install can't transcribe until both the
             // VAD model and some Whisper model are present, so provision

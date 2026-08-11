@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use std::str::FromStr;
@@ -6,11 +6,16 @@ use tauri::{AppHandle, Manager};
 use tracing::info;
 
 /// Initialise the SQLite connection pool and run migrations.
+///
+/// Called synchronously (via `tauri::async_runtime::block_on`) from
+/// `lib.rs`'s `setup()`, before the app finishes starting — every
+/// `#[tauri::command]` that takes `State<'_, SqlitePool>` would otherwise
+/// be able to run before `app.manage(pool)` below has happened.
 pub async fn initialise(app: &AppHandle) -> Result<SqlitePool> {
     let app_dir = app
         .path()
         .app_data_dir()
-        .expect("failed to resolve app data directory");
+        .map_err(|e| anyhow!("failed to resolve app data directory: {e}"))?;
 
     std::fs::create_dir_all(&app_dir)?;
 
