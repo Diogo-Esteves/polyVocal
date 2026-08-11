@@ -2,6 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -40,6 +41,7 @@ fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
 pub struct AudioCapture {
     tx: mpsc::Sender<Vec<f32>>,
     _stream: cpal::Stream,
+    dropped_frames: Arc<AtomicU64>,
 }
 
 impl AudioCapture {
@@ -84,6 +86,8 @@ impl AudioCapture {
         let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
 
+        let dropped_frames = Arc::new(AtomicU64::new(0));
+
         // Create resampler for this device's input rate. Always mono (1),
         // regardless of the device's actual channel count — the capture
         // callbacks below down-mix to mono before ever calling resample().
@@ -94,15 +98,30 @@ impl AudioCapture {
 
         // Build stream based on sample format
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                Self::build_f32_stream(&device, &config, tx.clone(), resampler.clone(), channels)?
-            }
-            cpal::SampleFormat::I16 => {
-                Self::build_i16_stream(&device, &config, tx.clone(), resampler.clone(), channels)?
-            }
-            cpal::SampleFormat::U16 => {
-                Self::build_u16_stream(&device, &config, tx.clone(), resampler.clone(), channels)?
-            }
+            cpal::SampleFormat::F32 => Self::build_f32_stream(
+                &device,
+                &config,
+                tx.clone(),
+                resampler.clone(),
+                channels,
+                dropped_frames.clone(),
+            )?,
+            cpal::SampleFormat::I16 => Self::build_i16_stream(
+                &device,
+                &config,
+                tx.clone(),
+                resampler.clone(),
+                channels,
+                dropped_frames.clone(),
+            )?,
+            cpal::SampleFormat::U16 => Self::build_u16_stream(
+                &device,
+                &config,
+                tx.clone(),
+                resampler.clone(),
+                channels,
+                dropped_frames.clone(),
+            )?,
             _ => {
                 return Err(anyhow!(
                     "Unsupported sample format: {:?}",
@@ -117,9 +136,18 @@ impl AudioCapture {
             Self {
                 tx,
                 _stream: stream,
+                dropped_frames,
             },
             rx,
         ))
+    }
+
+    /// Number of resampled audio chunks dropped so far because the
+    /// capture channel was full — i.e. the consumer wasn't draining fast
+    /// enough (see issue #45/#49). Exposed for future surfacing to the
+    /// user/session; not wired into the UI yet.
+    pub fn dropped_frames(&self) -> u64 {
+        self.dropped_frames.load(Ordering::Relaxed)
     }
 
     fn build_f32_stream(
@@ -128,21 +156,29 @@ impl AudioCapture {
         tx: mpsc::Sender<Vec<f32>>,
         resampler: Arc<Mutex<AudioResampler>>,
         channels: usize,
+        dropped_frames: Arc<AtomicU64>,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
             &stream_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
                 let mono = downmix_to_mono(data, channels);
-                if let Ok(mut resampler) = resampler.lock() {
-                    if let Ok(resampled) = resampler.resample(&mono) {
-                        if !resampled.is_empty() {
-                            let _ = tx.try_send(resampled);
+                match resampler.lock() {
+                    Ok(mut resampler) => match resampler.resample(&mono) {
+                        Ok(resampled) => {
+                            if !resampled.is_empty() && tx.try_send(resampled).is_err() {
+                                dropped_frames.fetch_add(1, Ordering::Relaxed);
+                                tracing::warn!(
+                                    "audio capture channel full — dropped a resampled chunk"
+                                );
+                            }
                         }
-                    }
+                        Err(e) => tracing::error!("failed to resample audio frame: {e}"),
+                    },
+                    Err(_) => tracing::error!("resampler mutex poisoned — dropping audio frame"),
                 }
             },
-            |err| eprintln!("Audio stream error: {}", err),
+            |err| tracing::error!("audio stream error: {err}"),
             None,
         )?;
         Ok(stream)
@@ -154,6 +190,7 @@ impl AudioCapture {
         tx: mpsc::Sender<Vec<f32>>,
         resampler: Arc<Mutex<AudioResampler>>,
         channels: usize,
+        dropped_frames: Arc<AtomicU64>,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
@@ -161,15 +198,22 @@ impl AudioCapture {
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
                 let f32_samples = i16_to_f32(data);
                 let mono = downmix_to_mono(&f32_samples, channels);
-                if let Ok(mut resampler) = resampler.lock() {
-                    if let Ok(resampled) = resampler.resample(&mono) {
-                        if !resampled.is_empty() {
-                            let _ = tx.try_send(resampled);
+                match resampler.lock() {
+                    Ok(mut resampler) => match resampler.resample(&mono) {
+                        Ok(resampled) => {
+                            if !resampled.is_empty() && tx.try_send(resampled).is_err() {
+                                dropped_frames.fetch_add(1, Ordering::Relaxed);
+                                tracing::warn!(
+                                    "audio capture channel full — dropped a resampled chunk"
+                                );
+                            }
                         }
-                    }
+                        Err(e) => tracing::error!("failed to resample audio frame: {e}"),
+                    },
+                    Err(_) => tracing::error!("resampler mutex poisoned — dropping audio frame"),
                 }
             },
-            |err| eprintln!("Audio stream error: {}", err),
+            |err| tracing::error!("audio stream error: {err}"),
             None,
         )?;
         Ok(stream)
@@ -181,6 +225,7 @@ impl AudioCapture {
         tx: mpsc::Sender<Vec<f32>>,
         resampler: Arc<Mutex<AudioResampler>>,
         channels: usize,
+        dropped_frames: Arc<AtomicU64>,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
@@ -188,15 +233,22 @@ impl AudioCapture {
             move |data: &[u16], _: &cpal::InputCallbackInfo| {
                 let f32_samples = u16_to_f32(data);
                 let mono = downmix_to_mono(&f32_samples, channels);
-                if let Ok(mut resampler) = resampler.lock() {
-                    if let Ok(resampled) = resampler.resample(&mono) {
-                        if !resampled.is_empty() {
-                            let _ = tx.try_send(resampled);
+                match resampler.lock() {
+                    Ok(mut resampler) => match resampler.resample(&mono) {
+                        Ok(resampled) => {
+                            if !resampled.is_empty() && tx.try_send(resampled).is_err() {
+                                dropped_frames.fetch_add(1, Ordering::Relaxed);
+                                tracing::warn!(
+                                    "audio capture channel full — dropped a resampled chunk"
+                                );
+                            }
                         }
-                    }
+                        Err(e) => tracing::error!("failed to resample audio frame: {e}"),
+                    },
+                    Err(_) => tracing::error!("resampler mutex poisoned — dropping audio frame"),
                 }
             },
-            |err| eprintln!("Audio stream error: {}", err),
+            |err| tracing::error!("audio stream error: {err}"),
             None,
         )?;
         Ok(stream)
