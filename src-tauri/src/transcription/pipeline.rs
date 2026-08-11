@@ -1,75 +1,52 @@
 #![allow(dead_code)]
 
-use super::engine::{TranscriptResult, TranscriptionEngine};
 use super::session::TranscriptionSession;
 use crate::vad::segmenter::{SpeechSegmenter, VoiceActivityScorer};
 use anyhow::Result;
 
-/// Transcribes a buffer of 16 kHz mono f32 PCM samples.
-///
-/// Implemented by `TranscriptionEngine` (real whisper-rs inference) in
-/// production; tests inject a scripted implementation so `RecordingPipeline`'s
-/// wiring (does closing a segment trigger transcription and land in the
-/// session?) is verified independently of whether real inference works.
-pub trait Transcriber {
-    fn transcribe(&self, pcm: &[f32]) -> Result<TranscriptResult>;
-}
-
-impl Transcriber for TranscriptionEngine {
-    fn transcribe(&self, pcm: &[f32]) -> Result<TranscriptResult> {
-        TranscriptionEngine::transcribe(self, pcm)
-    }
-}
-
-/// Wires VAD segmentation, transcription, and session accumulation together.
-///
-/// Feeds one 16 kHz mono f32 frame at a time; whenever the segmenter closes a
-/// speech segment, transcribes it and appends the result to the session.
-pub struct RecordingPipeline<V: VoiceActivityScorer, E: Transcriber> {
+/// Wires VAD segmentation and session accumulation together. Deliberately
+/// does *not* own or call the transcription engine directly (see DEC-006
+/// and issue #45) — Whisper inference is CPU-bound and must run off the
+/// async executor via `spawn_blocking`, which needs to take ownership of
+/// the engine per call; a struct field can't be moved in and out of a
+/// `&mut self` method that way. Callers own the engine themselves, call
+/// `push_frame`/`flush` to get raw segment samples, transcribe those
+/// off-executor on their own, and report the result back via
+/// `record_transcript`.
+pub struct RecordingPipeline<V: VoiceActivityScorer> {
     segmenter: SpeechSegmenter<V>,
-    engine: E,
     session: TranscriptionSession,
 }
 
-impl<V: VoiceActivityScorer, E: Transcriber> RecordingPipeline<V, E> {
-    pub fn new(segmenter: SpeechSegmenter<V>, engine: E) -> Self {
+impl<V: VoiceActivityScorer> RecordingPipeline<V> {
+    pub fn new(segmenter: SpeechSegmenter<V>) -> Self {
         Self {
             segmenter,
-            engine,
             session: TranscriptionSession::new(),
         }
     }
 
-    /// Feed one frame of 16 kHz mono f32 PCM into the pipeline.
-    ///
-    /// Returns an error if VAD scoring or transcription fails. Returns
-    /// `Some` (and accumulates into the session) whenever this frame closes
-    /// a speech segment — callers use this to push the segment onward (e.g.
-    /// as a `transcript:segment` event, per DEC-007) without polling.
-    pub fn push_frame(&mut self, frame: &[f32]) -> Result<Option<TranscriptResult>> {
-        if let Some(segment) = self.segmenter.push(frame)? {
-            let result = self.engine.transcribe(&segment.samples)?;
-            self.session.append(&result.text, &result.language);
-            return Ok(Some(result));
-        }
-        Ok(None)
+    /// Feed one frame of 16 kHz mono f32 PCM into the VAD segmenter only —
+    /// cheap, safe to call inline on an async task. Returns the closed
+    /// segment's raw samples once enough trailing silence has been seen
+    /// (or the segment hit its max length — see `SpeechSegmenter`);
+    /// transcribing them and reporting the result back via
+    /// `record_transcript` is the caller's responsibility.
+    pub fn push_frame(&mut self, frame: &[f32]) -> Result<Option<Vec<f32>>> {
+        Ok(self.segmenter.push(frame)?.map(|segment| segment.samples))
     }
 
-    /// Force-closes and transcribes any in-progress speech segment.
-    ///
-    /// Callers use this when the audio stream ends before the usual
-    /// trailing-silence hangover naturally closes the segment (see
-    /// `SpeechSegmenter::flush`) — e.g. recording stops right after the
-    /// last word. Without this, that final utterance is silently dropped:
-    /// `push_frame` only closes (and transcribes) a segment once enough
-    /// trailing silence has actually arrived.
-    pub fn flush(&mut self) -> Result<Option<TranscriptResult>> {
-        let Some(segment) = self.segmenter.flush() else {
-            return Ok(None);
-        };
-        let result = self.engine.transcribe(&segment.samples)?;
-        self.session.append(&result.text, &result.language);
-        Ok(Some(result))
+    /// Force-closes an in-progress segment (see `SpeechSegmenter::flush`),
+    /// e.g. when the audio stream ends before the usual trailing-silence
+    /// hangover closes it naturally.
+    pub fn flush(&mut self) -> Option<Vec<f32>> {
+        self.segmenter.flush().map(|segment| segment.samples)
+    }
+
+    /// Records a transcription result (for a segment previously returned
+    /// by `push_frame` or `flush`) into the accumulated session.
+    pub fn record_transcript(&mut self, text: &str, language: &str) {
+        self.session.append(text, language);
     }
 
     /// The session accumulated so far.
@@ -85,7 +62,6 @@ impl<V: VoiceActivityScorer, E: Transcriber> RecordingPipeline<V, E> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::engine::Segment;
     use super::*;
 
     /// Returns preset scores in sequence; panics if asked for more than provided.
@@ -110,106 +86,84 @@ mod tests {
         }
     }
 
-    /// Reports a fixed transcript + language for any non-empty audio it
-    /// receives, without running real whisper-rs inference.
-    struct FakeTranscriber;
-
-    impl Transcriber for FakeTranscriber {
-        fn transcribe(&self, pcm: &[f32]) -> Result<TranscriptResult> {
-            Ok(TranscriptResult {
-                text: "hello".to_string(),
-                language: "en".to_string(),
-                segments: vec![Segment {
-                    start_ms: 0,
-                    end_ms: (pcm.len() * 1000 / 16000) as i64,
-                    text: "hello".to_string(),
-                }],
-            })
-        }
+    fn segmenter(scores: Vec<f32>) -> SpeechSegmenter<ScriptedScorer> {
+        SpeechSegmenter::new(ScriptedScorer::new(scores), 0.5, 2, 100)
     }
 
     #[test]
-    fn test_silence_does_not_update_session() {
-        let scorer = ScriptedScorer::new(vec![0.0; 3]);
-        let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
-        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
+    fn test_silence_produces_no_samples() {
+        let mut pipeline = RecordingPipeline::new(segmenter(vec![0.0; 3]));
 
         let frame = vec![0.0f32; 4];
         for _ in 0..3 {
-            pipeline.push_frame(&frame).unwrap();
+            assert_eq!(pipeline.push_frame(&frame).unwrap(), None);
         }
-
-        assert!(pipeline.session().detected_language.is_none());
         assert!(pipeline.session().transcript.is_empty());
     }
 
     #[test]
-    fn test_closed_segment_updates_session() {
+    fn test_closed_segment_returns_samples_for_caller_to_transcribe() {
         // 2 speech frames, then 2 silence frames close the segment (hangover = 2).
-        let scores = vec![0.9, 0.9, 0.0, 0.0];
-        let scorer = ScriptedScorer::new(scores);
-        let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
-        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
+        let mut pipeline = RecordingPipeline::new(segmenter(vec![0.9, 0.9, 0.0, 0.0]));
 
+        let frame = vec![0.1f32; 4];
+        let mut produced = None;
+        for _ in 0..4 {
+            if let Some(samples) = pipeline.push_frame(&frame).unwrap() {
+                produced = Some(samples);
+            }
+        }
+
+        let samples = produced.expect("segment should close after silence hangover");
+        assert_eq!(samples.len(), 16); // 4 frames * 4 samples
+                                       // Nothing recorded into the session until the caller reports back.
+        assert!(pipeline.session().transcript.is_empty());
+    }
+
+    #[test]
+    fn test_record_transcript_updates_session() {
+        let mut pipeline = RecordingPipeline::new(segmenter(vec![0.9, 0.9, 0.0, 0.0]));
         let frame = vec![0.1f32; 4];
         for _ in 0..4 {
             pipeline.push_frame(&frame).unwrap();
         }
 
-        // The fake transcriber reports "en"/"hello" for any non-empty audio
-        // it receives — this only becomes Some once the segmenter has
-        // actually closed a segment and handed it to the engine.
-        assert_eq!(pipeline.session().detected_language.as_deref(), Some("en"));
+        pipeline.record_transcript("hello", "en");
+
         assert_eq!(pipeline.session().transcript, "hello");
+        assert_eq!(pipeline.session().detected_language.as_deref(), Some("en"));
     }
 
     #[test]
-    fn test_flush_transcribes_in_progress_segment() {
-        // Speech throughout, never enough trailing silence to close
-        // naturally — mirrors stopping recording right after talking.
-        let scorer = ScriptedScorer::new(vec![0.9, 0.9, 0.9]);
-        let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
-        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
-
+    fn test_flush_returns_in_progress_samples() {
+        let mut pipeline = RecordingPipeline::new(segmenter(vec![0.9, 0.9, 0.9]));
         let frame = vec![0.1f32; 4];
         for _ in 0..3 {
-            let result = pipeline.push_frame(&frame).unwrap();
-            assert!(result.is_none(), "segment shouldn't close without silence");
+            assert_eq!(pipeline.push_frame(&frame).unwrap(), None);
         }
-        assert!(pipeline.session().transcript.is_empty());
 
-        let flushed = pipeline
-            .flush()
-            .unwrap()
-            .expect("in-progress speech should flush");
-        assert_eq!(flushed.text, "hello");
-        assert_eq!(pipeline.session().transcript, "hello");
-        assert_eq!(pipeline.session().detected_language.as_deref(), Some("en"));
+        let samples = pipeline.flush().expect("in-progress speech should flush");
+        assert_eq!(samples.len(), 12);
     }
 
     #[test]
     fn test_flush_is_none_when_nothing_in_progress() {
-        let scorer = ScriptedScorer::new(vec![0.0; 2]);
-        let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
-        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
-
+        let mut pipeline = RecordingPipeline::new(segmenter(vec![0.0; 2]));
         let frame = vec![0.0f32; 4];
         pipeline.push_frame(&frame).unwrap();
         pipeline.push_frame(&frame).unwrap();
 
-        assert!(pipeline.flush().unwrap().is_none());
+        assert!(pipeline.flush().is_none());
     }
 
     #[test]
     fn test_finish_returns_accumulated_session() {
-        let scorer = ScriptedScorer::new(vec![0.9, 0.9, 0.0, 0.0]);
-        let segmenter = SpeechSegmenter::new(scorer, 0.5, 2);
-        let mut pipeline = RecordingPipeline::new(segmenter, FakeTranscriber);
-
+        let mut pipeline = RecordingPipeline::new(segmenter(vec![0.9, 0.9, 0.0, 0.0]));
         let frame = vec![0.1f32; 4];
         for _ in 0..4 {
             pipeline.push_frame(&frame).unwrap();
         }
+        pipeline.record_transcript("hello", "en");
 
         let session = pipeline.finish();
         assert_eq!(session.detected_language.as_deref(), Some("en"));

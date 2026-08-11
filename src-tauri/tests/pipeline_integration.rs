@@ -20,6 +20,7 @@ use polyvocal_lib::vad::silero::{SileroVad, SILERO_FRAME_SIZE};
 
 const VAD_THRESHOLD: f32 = 0.5;
 const VAD_MIN_SILENCE_FRAMES: usize = 10;
+const VAD_MAX_SEGMENT_FRAMES: usize = 938;
 
 #[tokio::test]
 async fn test_jfk_fixture_transcribes_recognizable_speech() {
@@ -49,15 +50,30 @@ async fn test_jfk_fixture_transcribes_recognizable_speech() {
     let engine = TranscriptionEngine::load(models_dir.join(ModelSize::Tiny.filename()))
         .expect("whisper model should load");
     let scorer = SileroVad::load(vad_model_path).expect("silero model should load");
-    let segmenter = SpeechSegmenter::new(scorer, VAD_THRESHOLD, VAD_MIN_SILENCE_FRAMES);
-    let mut pipeline = RecordingPipeline::new(segmenter, engine);
+    let segmenter = SpeechSegmenter::new(
+        scorer,
+        VAD_THRESHOLD,
+        VAD_MIN_SILENCE_FRAMES,
+        VAD_MAX_SEGMENT_FRAMES,
+    );
+    let mut pipeline = RecordingPipeline::new(segmenter);
 
+    // The pipeline no longer transcribes internally (issue #45) — it hands
+    // back closed segments and the caller drives the engine. In the app
+    // that's `spawn_blocking`; here, on a test thread, calling straight
+    // through is fine.
     let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
     for chunk in samples.chunks(1600) {
         for frame in chunker.push(chunk) {
-            pipeline
+            let closed = pipeline
                 .push_frame(&frame)
                 .expect("pipeline should process real speech audio");
+            if let Some(segment_samples) = closed {
+                let result = engine
+                    .transcribe(&segment_samples)
+                    .expect("real speech segment should transcribe");
+                pipeline.record_transcript(&result.text, &result.language);
+            }
         }
     }
 
