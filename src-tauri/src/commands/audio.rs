@@ -207,6 +207,34 @@ pub async fn stop_recording(
 
     slot.audio_state = slot.audio_state.clone().stop_recording()?;
 
+    // Teardown + persistence can fail in several independent ways (a
+    // panicked capture thread, a panicked transcription task, a DB write
+    // error) — captured here rather than `?`-propagated directly, so a
+    // failure can't skip the state reset below and leave the state
+    // machine stuck in `Stopping` forever (issue #46).
+    let result = finish_recording(stop_tx, capture_thread, task, started_at, pool.inner()).await;
+
+    // The capture thread is joined and the transcription task awaited by
+    // this point either way — recording really is over, regardless of
+    // whether persisting it succeeded — so unconditionally return to
+    // Idle rather than routing through `AudioState::finalize()`, which
+    // would need its own error handling for what should be unreachable
+    // (we hold the only handle to `slot` and just set `Stopping` above).
+    slot.audio_state = AudioState::idle();
+
+    result
+}
+
+/// Joins the capture thread, awaits the transcription task, and persists
+/// the resulting session. Split out from `stop_recording` so its `Result`
+/// can be captured without short-circuiting past the state-machine reset.
+async fn finish_recording(
+    stop_tx: std::sync::mpsc::Sender<()>,
+    capture_thread: std::thread::JoinHandle<()>,
+    task: JoinHandle<TranscriptionSession>,
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pool: &SqlitePool,
+) -> Result<String, String> {
     // Signal the capture thread to stop, then join it off the async
     // executor (it blocks on `stop_rx.recv()`/stream teardown).
     let _ = stop_tx.send(());
@@ -225,10 +253,89 @@ pub async fn stop_recording(
     // for this recording, rather than the fresh one `Session::new` mints.
     record.id = session.id.to_string();
 
-    let repository = SessionRepository::new(pool.inner().clone());
+    let repository = SessionRepository::new(pool.clone());
     repository.save(&record).await.map_err(|e| e.to_string())?;
 
-    slot.audio_state = slot.audio_state.clone().finalize()?;
-
     Ok(record.id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn test_pool() -> SqlitePool {
+        // A single connection: sqlx pools each connection to a distinct
+        // in-memory database, so >1 connection would see empty tables.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite should connect");
+        crate::storage::db::run_migrations(&pool)
+            .await
+            .expect("migrations should run");
+        pool
+    }
+
+    fn finished_capture_thread() -> std::thread::JoinHandle<()> {
+        std::thread::spawn(|| {})
+    }
+
+    #[tokio::test]
+    async fn finish_recording_succeeds_and_persists_session() {
+        let pool = test_pool().await;
+        let (stop_tx, _stop_rx) = std::sync::mpsc::channel::<()>();
+
+        let mut session = TranscriptionSession::new();
+        session.append("hello world", "en");
+        let expected_id = session.id.to_string();
+        let task = tokio::spawn(async move { session });
+
+        let result = finish_recording(stop_tx, finished_capture_thread(), task, None, &pool).await;
+
+        let id = result.expect("should succeed");
+        assert_eq!(id, expected_id);
+
+        let repository = SessionRepository::new(pool);
+        let saved = repository
+            .get(&id)
+            .await
+            .expect("query should succeed")
+            .expect("session should be persisted");
+        assert_eq!(saved.transcript, "hello world");
+        assert_eq!(saved.language.as_deref(), Some("en"));
+    }
+
+    /// Regression test for issue #46: a panicked capture thread must
+    /// surface as an `Err`, not panic `stop_recording` itself and leave
+    /// the caller unable to reset the state machine back to `Idle`.
+    #[tokio::test]
+    async fn finish_recording_returns_err_when_capture_thread_panics() {
+        let pool = test_pool().await;
+        let (stop_tx, _stop_rx) = std::sync::mpsc::channel::<()>();
+
+        let panicked_thread = std::thread::spawn(|| panic!("simulated capture thread panic"));
+        let task = tokio::spawn(async { TranscriptionSession::new() });
+
+        let result = finish_recording(stop_tx, panicked_thread, task, None, &pool).await;
+
+        let err = result.expect_err("a panicked capture thread should surface as an error");
+        assert!(err.contains("panicked"));
+    }
+
+    /// Regression test for issue #46: a panicked transcription task must
+    /// surface as an `Err` too, for the same reason.
+    #[tokio::test]
+    async fn finish_recording_returns_err_when_transcription_task_panics() {
+        let pool = test_pool().await;
+        let (stop_tx, _stop_rx) = std::sync::mpsc::channel::<()>();
+
+        let task: JoinHandle<TranscriptionSession> =
+            tokio::spawn(async { panic!("simulated transcription task panic") });
+
+        let result = finish_recording(stop_tx, finished_capture_thread(), task, None, &pool).await;
+
+        assert!(result.is_err());
+    }
 }
