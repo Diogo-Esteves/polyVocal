@@ -74,12 +74,7 @@ impl ModelManager {
             return Ok(());
         }
 
-        info!(
-            "Downloading {} ({} MB) → {}",
-            size.filename(),
-            size.size_mb(),
-            dest.display()
-        );
+        info!("Downloading {} ({} MB)", size.filename(), size.size_mb());
         downloader.download_to(size.download_url(), &dest).await?;
         Ok(())
     }
@@ -97,11 +92,7 @@ impl ModelManager {
     ) -> Result<PathBuf> {
         let dest = self.vad_model_path(model);
         if !dest.exists() {
-            info!(
-                "Downloading VAD model {} → {}",
-                model.filename(),
-                dest.display()
-            );
+            info!("Downloading VAD model {}", model.filename());
             downloader.download_to(model.download_url(), &dest).await?;
         }
         Ok(dest)
@@ -129,10 +120,9 @@ impl ModelManager {
                 continue;
             }
             info!(
-                "Downloading translation model file {}/{} → {}",
+                "Downloading translation model file {}/{}",
                 model.dir_name(),
-                file,
-                dest.display()
+                file
             );
             downloader
                 .download_to(&model.download_url(file), &dest)
