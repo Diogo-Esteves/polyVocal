@@ -36,23 +36,15 @@ pub async fn initialise(app: &AppHandle) -> Result<SqlitePool> {
     Ok(pool)
 }
 
+/// Applies every pending migration in `src-tauri/migrations`, tracked in
+/// sqlx's own `_sqlx_migrations` table.
+///
+/// The SQL files are embedded at compile time by `sqlx::migrate!`, so this
+/// needs no `DATABASE_URL` and no `.sqlx` offline cache — the repository
+/// queries are all runtime `sqlx::query`/`query_as`, not the compile-time
+/// checked macro form.
 pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<()> {
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS sessions (
-            id          TEXT PRIMARY KEY,
-            created_at  TEXT NOT NULL,
-            duration_ms INTEGER NOT NULL DEFAULT 0,
-            language    TEXT,
-            transcript  TEXT NOT NULL,
-            translation TEXT,
-            target_lang TEXT,
-            synced      INTEGER NOT NULL DEFAULT 0
-        );
-        "#,
-    )
-    .execute(pool)
-    .await?;
+    sqlx::migrate!("./migrations").run(pool).await?;
 
     Ok(())
 }
