@@ -11,21 +11,12 @@ use crate::transcription::pipeline::{ClosedSegment, RecordingPipeline};
 use crate::transcription::session::TranscriptionSession;
 use crate::vad::segmenter::SpeechSegmenter;
 use crate::vad::silero::{SileroVad, SILERO_FRAME_SIZE};
+use crate::vad::{VAD_MAX_SEGMENT_FRAMES, VAD_MIN_SILENCE_FRAMES, VAD_THRESHOLD};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-
-/// Minimum speech-probability score to treat a VAD frame as speech.
-const VAD_THRESHOLD: f32 = 0.5;
-/// Consecutive silent frames required to close a speech segment (~320ms at 32ms/frame).
-const VAD_MIN_SILENCE_FRAMES: usize = 10;
-/// Force-closes a segment after this many frames even without trailing
-/// silence — ~30s at 32ms/frame (SILERO_FRAME_SIZE=512 samples @16kHz),
-/// matching whisper.cpp's own context window. Bounds memory growth and
-/// transcript latency for continuous speech (issue #47).
-const VAD_MAX_SEGMENT_FRAMES: usize = 938;
 
 /// A recording in progress.
 ///

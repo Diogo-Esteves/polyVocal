@@ -5,5 +5,4 @@
 pub mod audio;
 pub mod models;
 pub mod storage;
-pub mod transcription;
 pub mod translation;

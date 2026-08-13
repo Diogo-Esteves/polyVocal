@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::Result;
 
 /// Scores a single frame of 16 kHz mono f32 PCM for speech probability (0.0-1.0).

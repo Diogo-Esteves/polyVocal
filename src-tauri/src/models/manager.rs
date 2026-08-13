@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::downloader::ModelDownloader;
 use super::registry::{ModelInfo, ModelSize, TranslationModel, VadModel, TRANSLATION_MODEL_FILES};
 use anyhow::Result;

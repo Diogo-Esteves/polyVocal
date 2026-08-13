@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::segmenter::VoiceActivityScorer;
 use anyhow::{anyhow, Result};
 use ort::session::Session;
