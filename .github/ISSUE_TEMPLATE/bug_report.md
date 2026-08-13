@@ -28,7 +28,13 @@ What actually happened?
 - **Language spoken:** 
 
 ## Logs
-Paste relevant lines from the app log (`~/.local/share/polyvocal/polyvocal.log` on Linux).
+Paste relevant lines from the app log. PolyVocal writes a daily-rotating
+`polyvocal.<YYYY-MM-DD>.log` (last 7 days kept) in a `logs` folder inside its
+app data directory:
+
+- **Linux:** `~/.local/share/com.polyvocal.app/logs/`
+- **macOS:** `~/Library/Application Support/com.polyvocal.app/logs/`
+- **Windows:** `%APPDATA%\com.polyvocal.app\logs\`
 
 ```
 paste log here

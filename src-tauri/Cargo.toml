@@ -65,6 +65,13 @@ thiserror = "1"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Rotating on-disk log file (DEC-018) — a bundled app launched from a
+# menu/dock has no terminal, so stdout-only logging is invisible.
+tracing-appender = "0.2"
+# Resolves the platform app-data directory at logging-init time, before
+# Tauri's `App` (and so `app.path().app_data_dir()`) exists. Same crate,
+# same version Tauri itself resolves those paths with — see logging.rs.
+dirs = "6"
 
 # Language detection — resolves a session's source language locally when
 # it wasn't recorded at transcription time, so the translation engine
