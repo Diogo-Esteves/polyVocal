@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::models::{
     Session, TranscriptSegment, SESSION_STATUS_COMPLETE, SESSION_STATUS_IN_PROGRESS,
 };
@@ -16,6 +14,11 @@ impl SessionRepository {
         Self { pool }
     }
 
+    /// Inserts an already-complete session row. Superseded in production by
+    /// the incremental `create_in_progress` / `append_segment` / `finalise`
+    /// path (DEC-009); kept as the seeding helper the unit tests use to put
+    /// a finished session in front of the code under test.
+    #[allow(dead_code)]
     pub async fn save(&self, session: &Session) -> Result<()> {
         sqlx::query(
             r#"
@@ -104,6 +107,14 @@ impl SessionRepository {
     }
 
     /// A session's segments in recording order.
+    ///
+    /// The read side of the incremental segment storage added in DEC-009.
+    /// Nothing in the app reads it back yet — the frontend renders segments
+    /// live from `transcript:segment` events (DEC-007) and history shows the
+    /// denormalised `transcript` — but the timestamped rows exist precisely
+    /// so timed exports (e.g. SRT) can be built on them, and the storage
+    /// tests assert against it today.
+    #[allow(dead_code)]
     pub async fn segments(&self, session_id: &str) -> Result<Vec<TranscriptSegment>> {
         let segments = sqlx::query_as::<_, TranscriptSegment>(
             "SELECT * FROM segments WHERE session_id = ? ORDER BY start_ms, rowid",

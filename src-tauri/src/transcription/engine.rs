@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{anyhow, Result};
 use std::path::PathBuf;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};

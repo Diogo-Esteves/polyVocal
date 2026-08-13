@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -33,6 +31,12 @@ pub struct Session {
 }
 
 impl Session {
+    /// Builds a complete, already-finalised session in one go. Production
+    /// never takes this path — recordings are written incrementally via
+    /// `create_in_progress` / `append_segment` / `finalise` (DEC-009) — so
+    /// this only survives as the fixture the storage/translation unit tests
+    /// seed their in-memory databases with, alongside `SessionRepository::save`.
+    #[allow(dead_code)]
     pub fn new(transcript: String, language: Option<String>, duration_ms: i64) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),

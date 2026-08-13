@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::tokenizer::MarianTokenizer;
 use crate::models::downloader::ModelDownloader;
 use crate::models::manager::ModelManager;

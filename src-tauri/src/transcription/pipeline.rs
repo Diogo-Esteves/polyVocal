@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::session::TranscriptionSession;
 use crate::vad::segmenter::{SpeechSegmenter, VoiceActivityScorer};
 use anyhow::Result;

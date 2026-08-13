@@ -2,9 +2,9 @@
 name = "polyvocal"
 version = "0.1.0"
 description = "PolyVocal — fast, local, cross-platform speech-to-text with translation"
-authors = []
-license = "TBD"
-repository = ""
+authors = ["Diogo Esteves"]
+license = "MIT"
+repository = "https://github.com/Diogo-Esteves/polyVocal"
 edition = "2021"
 rust-version = "1.88" # ort (Silero VAD inference) requires 1.88+
 

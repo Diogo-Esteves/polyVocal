@@ -2,7 +2,6 @@ pub mod audio;
 mod commands;
 pub mod models;
 mod storage;
-mod sync;
 pub mod transcription;
 mod translation;
 pub mod vad;
@@ -31,8 +30,6 @@ pub fn run() {
             commands::audio::list_input_devices,
             commands::audio::start_recording,
             commands::audio::stop_recording,
-            // Transcription
-            commands::transcription::get_transcript_status,
             // Translation
             commands::translation::translate_text,
             // Storage

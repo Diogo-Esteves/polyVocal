@@ -17,10 +17,9 @@ use polyvocal_lib::transcription::engine::TranscriptionEngine;
 use polyvocal_lib::transcription::pipeline::RecordingPipeline;
 use polyvocal_lib::vad::segmenter::SpeechSegmenter;
 use polyvocal_lib::vad::silero::{SileroVad, SILERO_FRAME_SIZE};
-
-const VAD_THRESHOLD: f32 = 0.5;
-const VAD_MIN_SILENCE_FRAMES: usize = 10;
-const VAD_MAX_SEGMENT_FRAMES: usize = 938;
+// The production defaults, imported rather than redeclared, so this test
+// can't silently drift from what `start_recording` actually uses.
+use polyvocal_lib::vad::{VAD_MAX_SEGMENT_FRAMES, VAD_MIN_SILENCE_FRAMES, VAD_THRESHOLD};
 
 #[tokio::test]
 async fn test_jfk_fixture_transcribes_recognizable_speech() {
