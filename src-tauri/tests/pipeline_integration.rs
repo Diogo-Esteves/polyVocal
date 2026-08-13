@@ -68,9 +68,9 @@ async fn test_jfk_fixture_transcribes_recognizable_speech() {
             let closed = pipeline
                 .push_frame(&frame)
                 .expect("pipeline should process real speech audio");
-            if let Some(segment_samples) = closed {
+            if let Some(segment) = closed {
                 let result = engine
-                    .transcribe(&segment_samples)
+                    .transcribe(&segment.samples)
                     .expect("real speech segment should transcribe");
                 pipeline.record_transcript(&result.text, &result.language);
             }

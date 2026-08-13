@@ -36,8 +36,10 @@
 - [ ] Export formats (SRT, TXT, DOCX) *(TXT done — `export_session_txt` command opens a
       native save dialog and writes the transcript + translation via
       `tauri-plugin-dialog`/`tauri-plugin-fs`, triggered from an "Export"
-      button per session in Recent Sessions; SRT needs per-segment
-      timestamps we don't currently store, DOCX not started — see
+      button per session in Recent Sessions; SRT is now unblocked —
+      per-segment timestamps are persisted in the `segments` table
+      (`SessionRepository::segments`) — but the exporter itself isn't
+      written yet, and DOCX not started — see
       `src-tauri/src/commands/storage.rs`)*
 - [ ] API / integrations
 

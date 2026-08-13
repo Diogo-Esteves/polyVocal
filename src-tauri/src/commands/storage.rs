@@ -106,6 +106,7 @@ mod tests {
             translation: None,
             target_lang: None,
             synced: 0,
+            status: crate::storage::models::SESSION_STATUS_COMPLETE.to_string(),
         }
     }
 

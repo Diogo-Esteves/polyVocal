@@ -4,10 +4,10 @@ use crate::audio::device;
 use crate::audio::state::AudioState;
 use crate::models::manager::ModelManager;
 use crate::models::registry::VadModel;
-use crate::storage::models::Session;
+use crate::storage::models::TranscriptSegment;
 use crate::storage::repository::SessionRepository;
-use crate::transcription::engine::TranscriptionEngine;
-use crate::transcription::pipeline::RecordingPipeline;
+use crate::transcription::engine::{TranscriptResult, TranscriptionEngine};
+use crate::transcription::pipeline::{ClosedSegment, RecordingPipeline};
 use crate::transcription::session::TranscriptionSession;
 use crate::vad::segmenter::SpeechSegmenter;
 use crate::vad::silero::{SileroVad, SILERO_FRAME_SIZE};
@@ -77,6 +77,7 @@ pub async fn list_input_devices() -> Result<Vec<crate::audio::InputDevice>, Stri
 pub async fn start_recording(
     app: AppHandle,
     state: State<'_, RecordingState>,
+    pool: State<'_, SqlitePool>,
     device_id: Option<String>,
 ) -> Result<(), String> {
     let mut slot = state.0.lock().await;
@@ -139,31 +140,36 @@ pub async fn start_recording(
         .await
         .map_err(|_| "audio capture thread died before starting".to_string())??;
 
+    let session_id = transcription_session_id.to_string();
+
+    // The session header row exists from the moment audio starts flowing, so
+    // segments have something to attach to as they arrive and an interrupted
+    // recording is still recoverable (DEC-009); `stop_recording` finalises
+    // it. Created only once capture is confirmed running — a failed start
+    // shouldn't leave an empty phantom session in the history.
+    let repository = SessionRepository::new(pool.inner().clone());
+    if let Err(e) = repository.create_in_progress(&session_id).await {
+        // The capture thread is already running, blocked on `stop_rx` — tell
+        // it to shut down rather than leaking it (and the open microphone
+        // stream) on this early return.
+        let _ = stop_tx.send(());
+        return Err(e.to_string());
+    }
+
     let task = tokio::spawn(async move {
         let mut pipeline = pipeline;
         let mut engine = engine;
         let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
         let mut rx = rx;
 
-        let emit_segment = |result: &crate::transcription::engine::TranscriptResult| {
-            let start_ms = result.segments.first().map(|s| s.start_ms).unwrap_or(0);
-            let end_ms = result.segments.last().map(|s| s.end_ms).unwrap_or(0);
-            let payload = TranscriptSegmentEvent {
-                session_id: transcription_session_id.to_string(),
-                text: result.text.clone(),
-                language: result.language.clone(),
-                start_ms,
-                end_ms,
-            };
-            if let Err(e) = app.emit("transcript:segment", &payload) {
-                tracing::error!("failed to emit transcript:segment: {e}");
-            }
-        };
-
         while let Some(chunk) = rx.recv().await {
             for frame in chunker.push(&chunk) {
                 match pipeline.push_frame(&frame) {
-                    Ok(Some(samples)) => {
+                    Ok(Some(ClosedSegment {
+                        samples,
+                        start_ms,
+                        end_ms,
+                    })) => {
                         let Some((returned_engine, transcribe_result)) =
                             transcribe_segment(engine, samples).await
                         else {
@@ -174,7 +180,15 @@ pub async fn start_recording(
                         match transcribe_result {
                             Ok(result) => {
                                 pipeline.record_transcript(&result.text, &result.language);
-                                emit_segment(&result);
+                                persist_and_emit_segment(
+                                    &app,
+                                    &repository,
+                                    &session_id,
+                                    &result,
+                                    start_ms,
+                                    end_ms,
+                                )
+                                .await;
                             }
                             Err(e) => tracing::error!("transcription pipeline error: {e}"),
                         }
@@ -190,11 +204,24 @@ pub async fn start_recording(
         // hangover had a chance to close the segment naturally. Flush
         // whatever's left so it isn't silently dropped (see
         // RecordingPipeline::flush).
-        if let Some(samples) = pipeline.flush() {
+        if let Some(ClosedSegment {
+            samples,
+            start_ms,
+            end_ms,
+        }) = pipeline.flush()
+        {
             match transcribe_segment(engine, samples).await {
                 Some((_, Ok(result))) => {
                     pipeline.record_transcript(&result.text, &result.language);
-                    emit_segment(&result);
+                    persist_and_emit_segment(
+                        &app,
+                        &repository,
+                        &session_id,
+                        &result,
+                        start_ms,
+                        end_ms,
+                    )
+                    .await;
                 }
                 Some((_, Err(e))) => {
                     tracing::error!("transcription pipeline error on flush: {e}")
@@ -215,6 +242,49 @@ pub async fn start_recording(
     });
 
     Ok(())
+}
+
+/// Writes one transcribed segment to SQLite and emits it to the frontend.
+///
+/// The write happens as the segment arrives rather than at stop (DEC-009),
+/// so a crash mid-recording costs at most the last utterance instead of the
+/// whole session. A failed write is logged and swallowed on purpose: losing
+/// one segment is far better than aborting a recording the user is still
+/// speaking into, and the in-memory transcript still repairs the session's
+/// text when `finish_recording` finalises it.
+///
+/// `start_ms`/`end_ms` come from the VAD pipeline (offsets within the
+/// recording), not from whisper's per-buffer timestamps — see `ClosedSegment`.
+async fn persist_and_emit_segment(
+    app: &AppHandle,
+    repository: &SessionRepository,
+    session_id: &str,
+    result: &TranscriptResult,
+    start_ms: i64,
+    end_ms: i64,
+) {
+    let segment = TranscriptSegment::new(
+        session_id,
+        &result.text,
+        Some(&result.language),
+        start_ms,
+        end_ms,
+    );
+
+    if let Err(e) = repository.append_segment(&segment).await {
+        tracing::error!("failed to persist transcript segment: {e}");
+    }
+
+    let payload = TranscriptSegmentEvent {
+        session_id: session_id.to_string(),
+        text: result.text.clone(),
+        language: result.language.clone(),
+        start_ms,
+        end_ms,
+    };
+    if let Err(e) = app.emit("transcript:segment", &payload) {
+        tracing::error!("failed to emit transcript:segment: {e}");
+    }
 }
 
 #[tauri::command]
@@ -258,9 +328,12 @@ pub async fn stop_recording(
     result
 }
 
-/// Joins the capture thread, awaits the transcription task, and persists
-/// the resulting session. Split out from `stop_recording` so its `Result`
-/// can be captured without short-circuiting past the state-machine reset.
+/// Joins the capture thread, awaits the transcription task, and finalises
+/// the session row that `start_recording` created — its segments are
+/// already on disk (DEC-009), so this only records the total duration and
+/// final detected language and flips the status to `complete`. Split out
+/// from `stop_recording` so its `Result` can be captured without
+/// short-circuiting past the state-machine reset.
 async fn finish_recording(
     stop_tx: std::sync::mpsc::Sender<()>,
     capture_thread: std::thread::JoinHandle<()>,
@@ -281,15 +354,23 @@ async fn finish_recording(
     let duration_ms = started_at
         .map(|t| (chrono::Utc::now() - t).num_milliseconds())
         .unwrap_or(0);
-    let mut record = Session::new(session.transcript, session.detected_language, duration_ms);
-    // Reuse the id the frontend already saw in `transcript:segment` events
-    // for this recording, rather than the fresh one `Session::new` mints.
-    record.id = session.id.to_string();
 
+    // The in-memory transcript is authoritative for the final text: it also
+    // covers any segment whose incremental write failed (logged, not fatal —
+    // see `persist_and_emit_segment`).
+    let id = session.id.to_string();
     let repository = SessionRepository::new(pool.clone());
-    repository.save(&record).await.map_err(|e| e.to_string())?;
+    repository
+        .finalise(
+            &id,
+            &session.transcript,
+            session.detected_language.as_deref(),
+            duration_ms,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
-    Ok(record.id)
+    Ok(id)
 }
 
 /// Transcribes off the async executor (DEC-006) — Whisper inference is
@@ -325,6 +406,7 @@ async fn transcribe_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::models::SESSION_STATUS_COMPLETE;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn test_pool() -> SqlitePool {
@@ -368,6 +450,63 @@ mod tests {
             .expect("session should be persisted");
         assert_eq!(saved.transcript, "hello world");
         assert_eq!(saved.language.as_deref(), Some("en"));
+        assert_eq!(saved.status, SESSION_STATUS_COMPLETE);
+    }
+
+    /// The normal path: `start_recording` created an in-progress row and
+    /// segments were written to it as they arrived, so finalising must
+    /// update that row (not insert a second one) and flip it to `complete`.
+    #[tokio::test]
+    async fn finish_recording_finalises_the_in_progress_session_created_at_start() {
+        let pool = test_pool().await;
+        let (stop_tx, _stop_rx) = std::sync::mpsc::channel::<()>();
+
+        let mut session = TranscriptionSession::new();
+        session.append("hello world", "en");
+        let id = session.id.to_string();
+
+        let repository = SessionRepository::new(pool.clone());
+        repository
+            .create_in_progress(&id)
+            .await
+            .expect("in-progress session should be created");
+        repository
+            .append_segment(&TranscriptSegment::new(
+                &id,
+                "hello world",
+                Some("en"),
+                0,
+                900,
+            ))
+            .await
+            .expect("segment should persist");
+
+        let task = tokio::spawn(async move { session });
+        let started_at = chrono::Utc::now() - chrono::Duration::milliseconds(1_000);
+        finish_recording(
+            stop_tx,
+            finished_capture_thread(),
+            task,
+            Some(started_at),
+            &pool,
+        )
+        .await
+        .expect("should succeed");
+
+        let sessions = repository.list(10, 0).await.expect("list should succeed");
+        assert_eq!(sessions.len(), 1, "finalising must not insert a second row");
+        assert_eq!(sessions[0].id, id);
+        assert_eq!(sessions[0].status, SESSION_STATUS_COMPLETE);
+        assert!(sessions[0].duration_ms >= 1_000);
+        assert_eq!(sessions[0].transcript, "hello world");
+        assert_eq!(
+            repository
+                .segments(&id)
+                .await
+                .expect("segments query")
+                .len(),
+            1
+        );
     }
 
     /// Regression test for issue #46: a panicked capture thread must
