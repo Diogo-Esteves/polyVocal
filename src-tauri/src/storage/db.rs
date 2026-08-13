@@ -20,7 +20,9 @@ pub async fn initialise(app: &AppHandle) -> Result<SqlitePool> {
     std::fs::create_dir_all(&app_dir)?;
 
     let db_path = app_dir.join("polyvocal.db");
-    info!("Database path: {}", db_path.display());
+    // Filename only, never the resolved path — logs are persisted to disk
+    // (DEC-018) and an absolute path leaks the user's home directory.
+    info!("Opening database polyvocal.db in the app data directory");
 
     let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))?
         .create_if_missing(true);

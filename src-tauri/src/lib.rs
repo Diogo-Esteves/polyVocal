@@ -1,5 +1,6 @@
 pub mod audio;
 mod commands;
+pub mod logging;
 pub mod models;
 mod storage;
 mod sync;
@@ -11,12 +12,16 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tracing::{error, info, warn};
 
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "polyvocal=debug".into()),
-        )
-        .init();
+    // Built here rather than inline in `.run()` below so the bundle
+    // identifier is available to the logger: the rotating log file has to
+    // land in the same app data directory Tauri resolves for the database,
+    // and `app.path()` doesn't exist until `.setup()` — by which point the
+    // startup lines below would already have been lost.
+    let context = tauri::generate_context!();
+
+    // Held until `run()` returns: dropping the guard shuts down the file
+    // writer's background thread and discards anything still buffered.
+    let _log_guard = logging::init(&context.config().identifier);
 
     info!("Starting PolyVocal");
 
@@ -82,6 +87,6 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running PolyVocal");
 }
