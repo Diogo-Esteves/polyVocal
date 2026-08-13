@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{anyhow, Result};
 use rubato::{FastFixedIn, Resampler as RubatoResampler};
 
@@ -8,7 +6,6 @@ use rubato::{FastFixedIn, Resampler as RubatoResampler};
 pub enum AudioError {
     ResamplingFailed(String),
     InvalidSampleRate(u32),
-    BufferFull,
 }
 
 impl std::fmt::Display for AudioError {
@@ -16,7 +13,6 @@ impl std::fmt::Display for AudioError {
         match self {
             AudioError::ResamplingFailed(msg) => write!(f, "Resampling failed: {}", msg),
             AudioError::InvalidSampleRate(rate) => write!(f, "Invalid sample rate: {}", rate),
-            AudioError::BufferFull => write!(f, "Audio buffer full"),
         }
     }
 }
@@ -29,9 +25,6 @@ impl std::error::Error for AudioError {}
 /// Target format: 16 kHz, mono, f32.
 pub struct AudioResampler {
     resampler: FastFixedIn<f32>,
-    input_rate: u32,
-    output_rate: u32,
-    channels: usize,
     buffer: Vec<f32>,
 }
 
@@ -72,9 +65,6 @@ impl AudioResampler {
 
         Ok(Self {
             resampler,
-            input_rate,
-            output_rate,
-            channels,
             buffer: Vec::with_capacity(chunk_size * 2),
         })
     }
@@ -126,21 +116,6 @@ impl AudioResampler {
 
         Ok(output)
     }
-
-    /// Get the input sample rate.
-    pub fn input_rate(&self) -> u32 {
-        self.input_rate
-    }
-
-    /// Get the output sample rate (target: 16000).
-    pub fn output_rate(&self) -> u32 {
-        self.output_rate
-    }
-
-    /// Get the number of channels.
-    pub fn channels(&self) -> usize {
-        self.channels
-    }
 }
 
 #[cfg(test)]
@@ -149,13 +124,7 @@ mod tests {
 
     #[test]
     fn test_resampler_creation() {
-        let resampler = AudioResampler::new(48000, 16000, 1);
-        assert!(resampler.is_ok());
-
-        let resampler = resampler.unwrap();
-        assert_eq!(resampler.input_rate(), 48000);
-        assert_eq!(resampler.output_rate(), 16000);
-        assert_eq!(resampler.channels(), 1);
+        assert!(AudioResampler::new(48000, 16000, 1).is_ok());
     }
 
     #[test]

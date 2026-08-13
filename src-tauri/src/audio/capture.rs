@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,7 +37,6 @@ fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
 
 /// Handle to an active audio capture session.
 pub struct AudioCapture {
-    tx: mpsc::Sender<Vec<f32>>,
     _stream: cpal::Stream,
     dropped_frames: Arc<AtomicU64>,
 }
@@ -58,16 +55,9 @@ impl AudioCapture {
     /// # Note
     /// `cpal::Stream` is `!Send` (audio callbacks are thread-affine), so
     /// this — and the `AudioCapture` it returns — must stay on whichever
-    /// thread calls it for its entire lifetime. This async wrapper exists
-    /// only for call-site convenience; see `start_blocking` for driving
-    /// capture from a dedicated OS thread instead of an async task.
-    pub async fn start(device_id: Option<String>) -> Result<(Self, mpsc::Receiver<Vec<f32>>)> {
-        Self::start_blocking(device_id)
-    }
-
-    /// Synchronous version of `start`, for callers that need to build the
-    /// stream on a specific (non-async) OS thread — e.g. a dedicated audio
-    /// thread whose lifetime the caller owns directly.
+    /// thread calls it for its entire lifetime. Callers therefore drive it
+    /// from a dedicated OS thread they own, never from an async task (see
+    /// `commands::audio::start_recording`).
     pub fn start_blocking(device_id: Option<String>) -> Result<(Self, mpsc::Receiver<Vec<f32>>)> {
         let host = cpal::default_host();
 
@@ -134,7 +124,6 @@ impl AudioCapture {
 
         Ok((
             Self {
-                tx,
                 _stream: stream,
                 dropped_frames,
             },
@@ -291,9 +280,9 @@ mod tests {
         assert!(f32_samples[3] < -0.9999);
     }
 
-    #[tokio::test]
-    async fn test_capture_invalid_device() {
-        let result = AudioCapture::start(Some("nonexistent_device".to_string())).await;
+    #[test]
+    fn test_capture_invalid_device() {
+        let result = AudioCapture::start_blocking(Some("nonexistent_device".to_string()));
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(e.to_string().contains("Audio device not found"));

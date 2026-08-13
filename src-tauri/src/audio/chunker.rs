@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /// Buffers variable-length audio pushes into fixed-size frames.
 ///
 /// `AudioCapture`'s resampled output isn't guaranteed to land on frame

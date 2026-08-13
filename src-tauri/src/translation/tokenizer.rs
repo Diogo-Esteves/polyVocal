@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{anyhow, Result};
 use rust_tokenizers::tokenizer::{MarianTokenizer as RustMarianTokenizer, Tokenizer as _};
 use std::path::Path;
