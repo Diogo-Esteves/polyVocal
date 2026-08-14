@@ -162,6 +162,17 @@ mod icons {
     }
 
     #[component]
+    pub fn History() -> impl IntoView {
+        view! {
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+                <path d="M12 7v5l4 2"/>
+            </svg>
+        }
+    }
+
+    #[component]
     pub fn Settings() -> impl IntoView {
         view! {
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -171,7 +182,7 @@ mod icons {
         }
     }
 }
-use icons::{Languages, Moon, Settings, Sun, SunMoon, TriangleAlert};
+use icons::{History, Languages, Moon, Settings, Sun, SunMoon, TriangleAlert};
 
 /// The PolyVocal mark — the hairbrush, rebuilt as inline SVG so it themes,
 /// stays crisp at any size, and exposes each strand as its own path. Geometry
@@ -345,6 +356,19 @@ const SESSION_PREVIEW_COUNT: usize = 3;
 const TARGET_LANGUAGES: [(&str, &str); 3] =
     [("en", "English"), ("pt", "Portuguese"), ("es", "Spanish")];
 
+/// Human name for an ISO code, for the action bar's language pill —
+/// "Languages, not files" (`../design/DESIGN.md` → *Design Principles*).
+/// Whisper detects far more languages than the three we can translate
+/// between, so anything outside `TARGET_LANGUAGES` falls back to the raw
+/// code rather than being hidden.
+fn language_label(code: &str) -> String {
+    TARGET_LANGUAGES
+        .iter()
+        .find(|(candidate, _)| *candidate == code)
+        .map(|(_, label)| (*label).to_string())
+        .unwrap_or_else(|| code.to_uppercase())
+}
+
 /// Mirrors `models::registry::ModelSize` — `rename_all = "lowercase"` on the
 /// backend, so this must serialize/deserialize the same way to match.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -437,6 +461,10 @@ fn App() -> impl IntoView {
     let translated_text = RwSignal::new(None::<String>);
     let translating = RwSignal::new(false);
     let settings_open = RwSignal::new(false);
+    // Interim entry point for history — the real slide-over sheet is #73. Until
+    // then Recent Sessions is toggled from the header like Settings, so it
+    // stops permanently occupying the screen the transcript should fill.
+    let history_open = RwSignal::new(false);
     let models = RwSignal::new(Vec::<ModelInfo>::new());
     let models_loading = RwSignal::new(false);
     let downloading_size = RwSignal::new(None::<ModelSize>);
@@ -446,6 +474,23 @@ fn App() -> impl IntoView {
     // The history list is collapsed to the newest few by default so the live
     // transcript/translation stay in view — see SESSION_PREVIEW_COUNT.
     let sessions_expanded = RwSignal::new(false);
+
+    // The transcript is the screen, and it flows upward: newest segment at the
+    // bottom, like a chat log. Pinning the scroll to the bottom whenever a
+    // segment lands is what makes that true while recording. `NodeRef::get()`
+    // is itself reactive, so this also fires once on mount.
+    let transcript_ref = NodeRef::<leptos::html::Section>::new();
+    Effect::new(move |_| {
+        transcript_lines.track();
+        let Some(element) = transcript_ref.get() else {
+            return;
+        };
+        // A frame late on purpose: this effect can run before the new line is
+        // patched into the DOM, and `scroll_height` only counts it afterwards.
+        request_animation_frame(move || {
+            element.set_scroll_top(element.scroll_height());
+        });
+    });
 
     // Purely reactive per DEC-007: listen for live transcript segments,
     // never poll a status command.
@@ -546,6 +591,8 @@ fn App() -> impl IntoView {
         let opening = !settings_open.get_untracked();
         settings_open.set(opening);
         if opening {
+            // One panel at a time — they share the main area (see the view).
+            history_open.set(false);
             models_loading.set(true);
             spawn_local(async move {
                 match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ())
@@ -567,6 +614,22 @@ fn App() -> impl IntoView {
                     <h1>"PolyVocal"</h1>
                 </div>
                 <div class="header-actions">
+                    <button
+                        class="history-toggle"
+                        class:is-active=move || history_open.get()
+                        on:click=move |_| {
+                            let opening = !history_open.get_untracked();
+                            history_open.set(opening);
+                            if opening {
+                                settings_open.set(false);
+                            }
+                        }
+                        title="History"
+                        aria-label="History"
+                        aria-expanded=move || if history_open.get() { "true" } else { "false" }
+                    >
+                        <History/>
+                    </button>
                     <button
                         class="settings-toggle"
                         class:is-active=move || settings_open.get()
@@ -666,7 +729,209 @@ fn App() -> impl IntoView {
                 </section>
             })}
 
-            <section class="controls">
+            {move || history_open.get().then(|| view! {
+                <section class="sessions">
+                    <h2>"Recent Sessions"</h2>
+                    {move || {
+                        if sessions_loading.get() {
+                            view! { <p class="sessions-empty">"Loading…"</p> }.into_any()
+                        } else if sessions.get().is_empty() {
+                            view! { <p class="sessions-empty">"No sessions yet."</p> }.into_any()
+                        } else {
+                            let all = sessions.get();
+                            let total = all.len();
+                            let visible: Vec<Session> = if sessions_expanded.get() {
+                                all
+                            } else {
+                                all.into_iter().take(SESSION_PREVIEW_COUNT).collect()
+                            };
+                            view! {
+                                <ul class="session-list">
+                                    {visible.into_iter().map(|session| {
+                                        let id = session.id.clone();
+                                        let delete_id = id.clone();
+                                        let confirm_class_id = id.clone();
+                                        let label_id = id.clone();
+                                        let export_id = id.clone();
+                                        let export_srt_id = id.clone();
+                                        let preview: String = if session.transcript.chars().count() > 80 {
+                                            let truncated: String = session.transcript.chars().take(80).collect();
+                                            format!("{truncated}…")
+                                        } else {
+                                            session.transcript.clone()
+                                        };
+                                        let language_label = session.language.clone().unwrap_or_else(|| "—".to_string());
+                                        let created_at = session.created_at.clone();
+                                        let translation_note = if session.translation.is_some() {
+                                            let target = session.target_lang.clone().unwrap_or_default();
+                                            format!(" · → {target}")
+                                        } else {
+                                            String::new()
+                                        };
+                                        view! {
+                                            <li class="session-item">
+                                                <div class="session-body">
+                                                    <p class="session-preview">{preview}</p>
+                                                    <p class="session-meta">{language_label}" · "{created_at}{translation_note}</p>
+                                                </div>
+                                                <div class="session-actions">
+                                                    <button
+                                                        class="session-export"
+                                                        on:click=move |_| {
+                                                            let id_to_export = export_id.clone();
+                                                            spawn_local(async move {
+                                                                let args = ExportSessionTxtArgs { id: &id_to_export };
+                                                                match tauri_sys::core::invoke_result::<Option<String>, String>("export_session_txt", args).await {
+                                                                    Ok(_) => error_message.set(None),
+                                                                    Err(e) => error_message.set(Some(e)),
+                                                                }
+                                                            });
+                                                        }
+                                                    >
+                                                        "Export TXT"
+                                                    </button>
+                                                    <button
+                                                        class="session-export"
+                                                        on:click=move |_| {
+                                                            let id_to_export = export_srt_id.clone();
+                                                            spawn_local(async move {
+                                                                let args = ExportSessionSrtArgs { id: &id_to_export };
+                                                                match tauri_sys::core::invoke_result::<Option<String>, String>("export_session_srt", args).await {
+                                                                    Ok(_) => error_message.set(None),
+                                                                    Err(e) => error_message.set(Some(e)),
+                                                                }
+                                                            });
+                                                        }
+                                                    >
+                                                        "Export SRT"
+                                                    </button>
+                                                    <button
+                                                        class="session-delete"
+                                                        class:is-confirming=move || pending_delete_id.get().as_deref() == Some(confirm_class_id.as_str())
+                                                        on:click=move |_| {
+                                                            if pending_delete_id.get_untracked().as_deref() == Some(delete_id.as_str()) {
+                                                                let id_to_delete = delete_id.clone();
+                                                                pending_delete_id.set(None);
+                                                                spawn_local(async move {
+                                                                    let args = DeleteSessionArgs { id: &id_to_delete };
+                                                                    if tauri_sys::core::invoke_result::<(), String>("delete_session", args).await.is_ok() {
+                                                                        sessions.update(|list| list.retain(|s| s.id != id_to_delete));
+                                                                    }
+                                                                });
+                                                            } else {
+                                                                pending_delete_id.set(Some(delete_id.clone()));
+                                                            }
+                                                        }
+                                                    >
+                                                        {move || if pending_delete_id.get().as_deref() == Some(label_id.as_str()) { "Confirm delete?" } else { "Delete" }}
+                                                    </button>
+                                                </div>
+                                            </li>
+                                        }
+                                    }).collect_view()}
+                                </ul>
+                                {(total > SESSION_PREVIEW_COUNT).then(|| view! {
+                                    <button
+                                        class="sessions-toggle"
+                                        on:click=move |_| sessions_expanded.update(|open| *open = !*open)
+                                    >
+                                        {move || if sessions_expanded.get() {
+                                            "Show less".to_string()
+                                        } else {
+                                            format!("View all {total} sessions")
+                                        }}
+                                    </button>
+                                })}
+                            }.into_any()
+                        }
+                    }}
+                </section>
+            })}
+
+            {move || {
+                error_message.get().map(|msg| view! {
+                    <p class="error"><TriangleAlert/> <span>{msg}</span></p>
+                })
+            }}
+
+            // Settings and History take the main area over while they're open
+            // rather than stacking above the transcript and squeezing it — the
+            // closest this gets to the sheets in #73 without building them.
+            {move || (!settings_open.get() && !history_open.get()).then(|| view! {
+                // The transcript *is* the screen (../design/DESIGN.md → *Key
+                // Screens · Record*): it takes every pixel the header and the
+                // action bar leave behind, and it is the only thing that scrolls.
+                // No heading — a chat log doesn't need labelling, so the
+                // accessible name moves to the region itself.
+                <section class="transcript" node_ref=transcript_ref aria-label="Transcript">
+                    {move || {
+                        let lines = transcript_lines.get();
+                        if lines.is_empty() {
+                            // One line, and nothing else. No cards, no tips.
+                            view! {
+                                <p class="transcript-empty">"Tap the brush and start talking."</p>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <div class="transcript-lines">
+                                    {lines
+                                        .into_iter()
+                                        .map(|line| view! { <p>{line}</p> })
+                                        .collect_view()}
+                                </div>
+                            }.into_any()
+                        }
+                    }}
+                </section>
+
+                // Stopgap. DESIGN.md puts translation on the session detail screen
+                // as an in-place toggle (#74); until that exists, removing this
+                // would drop the feature outright. So it stays, but only once
+                // there is a session to translate — never as an always-on section
+                // competing with the transcript for the screen.
+                {move || session_id.get().is_some().then(|| view! {
+                    <section class="translate">
+                        <h2><Languages/> <span>"Translate"</span></h2>
+                        <div class="controls">
+                            <button
+                                on:click=do_translate
+                                disabled=move || translating.get()
+                            >
+                                {move || if translating.get() { "Translating…" } else { "Translate" }}
+                            </button>
+                        </div>
+                        {move || translating.get().then(|| view! {
+                            <p class="translate-status">"Running locally — usually a few seconds, longer the first time a language pair's model needs downloading."</p>
+                        })}
+                        <p class="translated">{move || translated_text.get().unwrap_or_default()}</p>
+                    </section>
+                })}
+            })}
+
+            // Pinned to the bottom of the viewport by the app's flex column —
+            // language pill, then the record button and its status line, in
+            // the order DESIGN.md's mock lays them out.
+            <div class="action-bar">
+                <div class="language-pill">
+                    <span class="language-source">
+                        {move || detected_language
+                            .get()
+                            .map(|code| language_label(&code))
+                            .unwrap_or_else(|| "Auto".to_string())}
+                    </span>
+                    <span class="language-arrow" aria-hidden="true">"→"</span>
+                    <select
+                        class="language-target"
+                        aria-label="Translate into"
+                        prop:value=move || target_lang.get()
+                        on:change=move |ev| target_lang.set(event_target_value(&ev))
+                    >
+                        {TARGET_LANGUAGES
+                            .iter()
+                            .map(|(code, label)| view! { <option value=*code>{*label}</option> })
+                            .collect_view()}
+                    </select>
+                </div>
                 // The mark is the button — sized by CSS off the button's own
                 // diameter (56%), so the 88/96px breakpoint lives entirely in
                 // styles.css. The `size` prop only has to stay above 24 for
@@ -700,172 +965,7 @@ fn App() -> impl IntoView {
                         }}
                     </span>
                 </div>
-                <span class="language">
-                    "Detected language: "
-                    {move || detected_language.get().unwrap_or_else(|| "—".to_string())}
-                </span>
-            </section>
-
-            {move || {
-                error_message.get().map(|msg| view! {
-                    <p class="error"><TriangleAlert/> <span>{msg}</span></p>
-                })
-            }}
-
-            <section class="transcript">
-                <h2>"Transcript"</h2>
-                <div class="transcript-lines">
-                    {move || {
-                        transcript_lines
-                            .get()
-                            .into_iter()
-                            .map(|line| view! { <p>{line}</p> })
-                            .collect_view()
-                    }}
-                </div>
-            </section>
-
-            <section class="translate">
-                <h2><Languages/> <span>"Translate"</span></h2>
-                <div class="controls">
-                    <select
-                        prop:value=move || target_lang.get()
-                        on:change=move |ev| target_lang.set(event_target_value(&ev))
-                    >
-                        {TARGET_LANGUAGES
-                            .iter()
-                            .map(|(code, label)| view! { <option value=*code>{*label}</option> })
-                            .collect_view()}
-                    </select>
-                    <button
-                        on:click=do_translate
-                        disabled=move || session_id.get().is_none() || translating.get()
-                    >
-                        {move || if translating.get() { "Translating…" } else { "Translate" }}
-                    </button>
-                </div>
-                {move || translating.get().then(|| view! {
-                    <p class="translate-status">"Running locally — usually a few seconds, longer the first time a language pair's model needs downloading."</p>
-                })}
-                <p class="translated">{move || translated_text.get().unwrap_or_default()}</p>
-            </section>
-
-            <section class="sessions">
-                <h2>"Recent Sessions"</h2>
-                {move || {
-                    if sessions_loading.get() {
-                        view! { <p class="sessions-empty">"Loading…"</p> }.into_any()
-                    } else if sessions.get().is_empty() {
-                        view! { <p class="sessions-empty">"No sessions yet."</p> }.into_any()
-                    } else {
-                        let all = sessions.get();
-                        let total = all.len();
-                        let visible: Vec<Session> = if sessions_expanded.get() {
-                            all
-                        } else {
-                            all.into_iter().take(SESSION_PREVIEW_COUNT).collect()
-                        };
-                        view! {
-                            <ul class="session-list">
-                                {visible.into_iter().map(|session| {
-                                    let id = session.id.clone();
-                                    let delete_id = id.clone();
-                                    let confirm_class_id = id.clone();
-                                    let label_id = id.clone();
-                                    let export_id = id.clone();
-                                    let export_srt_id = id.clone();
-                                    let preview: String = if session.transcript.chars().count() > 80 {
-                                        let truncated: String = session.transcript.chars().take(80).collect();
-                                        format!("{truncated}…")
-                                    } else {
-                                        session.transcript.clone()
-                                    };
-                                    let language_label = session.language.clone().unwrap_or_else(|| "—".to_string());
-                                    let created_at = session.created_at.clone();
-                                    let translation_note = if session.translation.is_some() {
-                                        let target = session.target_lang.clone().unwrap_or_default();
-                                        format!(" · → {target}")
-                                    } else {
-                                        String::new()
-                                    };
-                                    view! {
-                                        <li class="session-item">
-                                            <div class="session-body">
-                                                <p class="session-preview">{preview}</p>
-                                                <p class="session-meta">{language_label}" · "{created_at}{translation_note}</p>
-                                            </div>
-                                            <div class="session-actions">
-                                                <button
-                                                    class="session-export"
-                                                    on:click=move |_| {
-                                                        let id_to_export = export_id.clone();
-                                                        spawn_local(async move {
-                                                            let args = ExportSessionTxtArgs { id: &id_to_export };
-                                                            match tauri_sys::core::invoke_result::<Option<String>, String>("export_session_txt", args).await {
-                                                                Ok(_) => error_message.set(None),
-                                                                Err(e) => error_message.set(Some(e)),
-                                                            }
-                                                        });
-                                                    }
-                                                >
-                                                    "Export TXT"
-                                                </button>
-                                                <button
-                                                    class="session-export"
-                                                    on:click=move |_| {
-                                                        let id_to_export = export_srt_id.clone();
-                                                        spawn_local(async move {
-                                                            let args = ExportSessionSrtArgs { id: &id_to_export };
-                                                            match tauri_sys::core::invoke_result::<Option<String>, String>("export_session_srt", args).await {
-                                                                Ok(_) => error_message.set(None),
-                                                                Err(e) => error_message.set(Some(e)),
-                                                            }
-                                                        });
-                                                    }
-                                                >
-                                                    "Export SRT"
-                                                </button>
-                                                <button
-                                                    class="session-delete"
-                                                    class:is-confirming=move || pending_delete_id.get().as_deref() == Some(confirm_class_id.as_str())
-                                                    on:click=move |_| {
-                                                        if pending_delete_id.get_untracked().as_deref() == Some(delete_id.as_str()) {
-                                                            let id_to_delete = delete_id.clone();
-                                                            pending_delete_id.set(None);
-                                                            spawn_local(async move {
-                                                                let args = DeleteSessionArgs { id: &id_to_delete };
-                                                                if tauri_sys::core::invoke_result::<(), String>("delete_session", args).await.is_ok() {
-                                                                    sessions.update(|list| list.retain(|s| s.id != id_to_delete));
-                                                                }
-                                                            });
-                                                        } else {
-                                                            pending_delete_id.set(Some(delete_id.clone()));
-                                                        }
-                                                    }
-                                                >
-                                                    {move || if pending_delete_id.get().as_deref() == Some(label_id.as_str()) { "Confirm delete?" } else { "Delete" }}
-                                                </button>
-                                            </div>
-                                        </li>
-                                    }
-                                }).collect_view()}
-                            </ul>
-                            {(total > SESSION_PREVIEW_COUNT).then(|| view! {
-                                <button
-                                    class="sessions-toggle"
-                                    on:click=move |_| sessions_expanded.update(|open| *open = !*open)
-                                >
-                                    {move || if sessions_expanded.get() {
-                                        "Show less".to_string()
-                                    } else {
-                                        format!("View all {total} sessions")
-                                    }}
-                                </button>
-                            })}
-                        }.into_any()
-                    }
-                }}
-            </section>
+            </div>
         </main>
     }
 }

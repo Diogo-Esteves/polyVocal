@@ -131,17 +131,34 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  padding: 1.5rem;
+  padding: 0;
   font-family: var(--font-sans);
   background: var(--color-bg);
   color: var(--color-text);
+  /* The record screen never scrolls as a page — the transcript scrolls
+   * inside it. See `.app` below. */
+  overflow: hidden;
 }
 
+/* One layout tree (design/DESIGN.md → *Layout*): a single centred column that
+ * fills the viewport, with the transcript taking every pixel the header, the
+ * action bar and any open panel leave behind. The bar is pinned by the column
+ * rather than by `position: fixed`, so it can never overlap content. */
 .app {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  height: 100dvh;
   max-width: 640px;
   margin: 0 auto;
+  padding: 0 var(--space-6);
 }
 
 .app-header {
@@ -149,6 +166,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  flex-shrink: 0;
+  padding-top: var(--space-6);
 }
 
 /* Mark + wordmark lockup. The mark carries its own px size (it is a detail
@@ -168,8 +187,14 @@ h1 {
   margin: 0;
 }
 
-section {
-  margin-top: 1.5rem;
+/* Settings and History take over the main area while open — they replace the
+ * transcript rather than stacking above it, which is the nearest thing to the
+ * sheets in #73 without building them. Each scrolls inside itself. */
+.settings,
+.sessions {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 h2 {
@@ -376,13 +401,20 @@ select:focus-visible {
   gap: 0.5rem;
 }
 
+/* Icon-only header controls. Sized to the 44×44px minimum in DESIGN.md →
+ * *Layout*, not to the icon. */
 .theme-toggle,
-.settings-toggle {
+.settings-toggle,
+.history-toggle {
+  min-width: 44px;
+  min-height: 44px;
   padding: 0.5rem;
+  justify-content: center;
   background: transparent;
 }
 
-.settings-toggle.is-active {
+.settings-toggle.is-active,
+.history-toggle.is-active {
   border-color: var(--color-primary);
   color: var(--color-primary);
 }
@@ -394,8 +426,47 @@ select:focus-visible {
   flex-wrap: wrap;
 }
 
-.language {
+/* The action bar — DESIGN.md → *Key Screens · Record*: language pill on top,
+ * then the record button and the status line that names its state. Pinned to
+ * the bottom of the column, and the only thing below the transcript. */
+.action-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) 0 var(--space-6);
+  border-top: 1px solid var(--color-hairline);
+}
+
+/* "Português → English ⌄" — set once, a default target for translation, not
+ * a live trigger. The source half is whatever Whisper detected, "Auto" until
+ * it has. */
+.language-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+  max-width: 100%;
+}
+
+.language-source,
+.language-arrow {
   color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.language-target {
+  min-height: 36px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-size: var(--text-sm);
 }
 
 /* Every animation here is decorative: the record label carries the state and
@@ -420,22 +491,74 @@ select:focus-visible {
   }
 }
 
-.transcript-lines,
-.translated {
-  min-height: 4rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem;
-  background: var(--color-surface);
+/* The transcript well. Takes the remaining height and is the primary
+ * scrolling area; `min-height: 0` is what lets it shrink inside the flex
+ * column instead of pushing the action bar off-screen. */
+.transcript {
+  /* Takes all spare height; `min-height: 0` is what lets it shrink past its
+   * content — that is what makes it scroll rather than push the action bar
+   * off the bottom. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--color-surface-sunken);
 }
 
+/* Flows upward: lines sit at the bottom of the well and grow toward the top,
+ * like a chat log, with the newest line last. */
 .transcript-lines {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 100%;
   font-size: var(--text-xl);
+}
+
+/* Transcripts are arbitrary speech in arbitrary scripts — never let a long
+ * unbroken run of characters scroll the app sideways. */
+.transcript-lines p,
+.translated {
+  overflow-wrap: anywhere;
+}
+
+.transcript-lines p {
+  margin: 0 0 var(--space-3);
+}
+
+.transcript-lines p:last-child {
+  margin-bottom: 0;
+}
+
+/* Empty state: one centred line, and nothing else. */
+.transcript-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  margin: 0;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-lg);
 }
 
 .translated {
   min-height: 2rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  background: var(--color-surface);
   font-size: var(--text-lg);
+}
+
+/* The translate stopgap sits under the transcript and only exists once there
+ * is a session to translate. Capped so it can never become the screen — it
+ * moves onto the session detail view in #74. */
+.translate {
+  flex: 0 0 auto;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .translate-status {
@@ -448,6 +571,13 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  /* Errors are one-liners in practice; the cap is what keeps a stack trace
+   * from a failed command from pushing the action bar off the bottom. Capped,
+   * so it never needs to shrink — the transcript absorbs the flex instead. */
+  flex: 0 0 auto;
+  max-height: 25vh;
+  overflow-y: auto;
+  margin: 0;
   color: var(--color-danger);
   background: var(--color-danger-bg);
   border-radius: var(--radius-sm);
@@ -483,6 +613,11 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  /* Export TXT / Export SRT / Delete are wider than a narrow window can give
+     them next to the preview; let them drop to their own row instead of
+     squeezing the transcript preview down to one character per line. The
+     actions move into the session's ⋯ menu in #74. */
+  flex-wrap: wrap;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 0.75rem;
@@ -505,6 +640,7 @@ select {
 }
 
 .session-body {
+  flex: 1 1 12rem;
   min-width: 0;
 }
 
