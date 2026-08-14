@@ -109,12 +109,10 @@ impl SessionRepository {
     /// A session's segments in recording order.
     ///
     /// The read side of the incremental segment storage added in DEC-009.
-    /// Nothing in the app reads it back yet — the frontend renders segments
-    /// live from `transcript:segment` events (DEC-007) and history shows the
-    /// denormalised `transcript` — but the timestamped rows exist precisely
-    /// so timed exports (e.g. SRT) can be built on them, and the storage
-    /// tests assert against it today.
-    #[allow(dead_code)]
+    /// The frontend renders segments live from `transcript:segment` events
+    /// (DEC-007) and history shows the denormalised `transcript`; these
+    /// timestamped rows exist so timed exports can be built on them, and
+    /// `export_session_srt` is the first consumer.
     pub async fn segments(&self, session_id: &str) -> Result<Vec<TranscriptSegment>> {
         let segments = sqlx::query_as::<_, TranscriptSegment>(
             "SELECT * FROM segments WHERE session_id = ? ORDER BY start_ms, rowid",
