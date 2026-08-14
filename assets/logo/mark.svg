@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 32 32" fill="none">
+  <!-- The PolyVocal mark at the 512px "app icon, full detail" variant — see
+       design/DESIGN.md. This is the source for `cargo tauri icon`, so the
+       colours are literal light-theme palette values from src/styles.css
+       rather than CSS custom properties: an app icon has no theme to follow. -->
+  <g transform="rotate(-15 16 16)">
+    <rect x="9.75" y="16" width="4.5" height="10" rx="2.25" fill="#8a5a32"/>
+    <circle cx="12" cy="26" r="3" fill="#8a5a32"/>
+    <rect x="7" y="3.5" width="12" height="15" rx="6" fill="#8a5a32"/>
+    <rect x="8.75" y="5.25" width="8.5" height="11.5" rx="4.25" fill="#6b4526"/>
+    <g stroke="#8a5a32" stroke-width="1" stroke-linecap="round">
+      <path d="M11.5 7.4v1.2"/>
+      <path d="M14.5 7.4v1.2"/>
+      <path d="M11.5 10.4v1.2"/>
+      <path d="M14.5 10.4v1.2"/>
+      <path d="M11.5 13.4v1.2"/>
+      <path d="M14.5 13.4v1.2"/>
+    </g>
+  </g>
+  <g class="pv-strands" stroke-width="2" stroke-linecap="round">
+    <path d="M17 15 Q25 16 28 12" stroke="#5f7f52"/>
+    <path d="M17 13 Q24 12 26  7" stroke="#3f7d79"/>
+    <path d="M18 10 Q25 10 29  6" stroke="#c25a3e"/>
+    <path d="M18  8 Q24  6 28  4" stroke="#a87c22"/>
+  </g>
+</svg>
