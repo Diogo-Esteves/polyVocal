@@ -249,11 +249,12 @@ select:focus-visible {
  *
  * `--pv-amp` is registered so it interpolates inside @keyframes instead of
  * stepping between stops. It is the amplitude seam: 0 is the strands' drawn
- * rest pose, 1 is fully extended. Today nothing measures the microphone (the
- * backend emits no level event — #76), so the recording state animates it on
- * a fixed loop: honest as "we are listening", not a meter. When a real level
- * arrives, setting `--pv-amp` on the button and dropping the loop animation
- * is the whole change — no strand geometry moves. */
+ * rest pose, 1 is fully extended. The backend emits a smoothed mic level on
+ * `audio:level` (#76) while recording; the frontend sets `--pv-amp` inline
+ * from it, and the `.has-live-level` class below drops the fixed idle-loop
+ * animation in favour of that real value — no strand geometry moves. Until
+ * the listener's first event lands, the loop still runs so the button never
+ * sits dead. */
 @property --pv-amp {
   syntax: "<number>";
   inherits: true;
@@ -365,7 +366,11 @@ select:focus-visible {
   transform: scale(calc(1 + 0.22 * var(--pv-amp, 0)));
 }
 
-.record-button.is-recording .pv-strands {
+/* The `:not(.has-live-level)` guard is what "the whole change" in the
+ * `--pv-amp` comment above refers to: once the frontend is receiving real
+ * `audio:level` events, this loop steps aside for the inline `--pv-amp` set
+ * from that data instead of fighting it every 2s. */
+.record-button.is-recording:not(.has-live-level) .pv-strands {
   animation: pv-strand-breathe 2s ease-in-out infinite;
 }
 

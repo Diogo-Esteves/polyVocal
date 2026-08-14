@@ -293,6 +293,14 @@ struct TranscriptSegment {
     language: String,
 }
 
+/// Mirrors the `audio:level` event payload emitted by the Rust backend
+/// (#76) — a single smoothed RMS amplitude in `[0, 1]`, sampled from the mic
+/// roughly 20 times a second while recording.
+#[derive(Deserialize, Clone)]
+struct AudioLevel {
+    level: f32,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StartRecordingArgs {
@@ -433,6 +441,13 @@ fn App() -> impl IntoView {
     let recording = RwSignal::new(false);
     let busy = RwSignal::new(false);
     let record_state = Memo::new(move |_| RecordState::from_signals(recording.get(), busy.get()));
+    // Raw smoothed RMS from `audio:level` (#76), in `[0, 1]`. Real speech
+    // rarely drives RMS anywhere near 1.0, so `pv_amp` below applies a
+    // display-only gain before handing it to `--pv-amp` — the backend value
+    // stays an honest amplitude, not a UI-tuned one.
+    let audio_level = RwSignal::new(0.0_f32);
+    const PV_AMP_GAIN: f32 = 4.0;
+    let pv_amp = move || (audio_level.get() * PV_AMP_GAIN).clamp(0.0, 1.0);
     // Seconds since capture opened, for the recording label. The backend
     // tracks its own `started_at` for `duration_ms`, but never surfaces it,
     // so this counts locally: one interval, started when `recording` goes
@@ -510,6 +525,23 @@ fn App() -> impl IntoView {
         }
     });
 
+    // Live meter per #76: drives `--pv-amp` off the mic's actual level
+    // instead of the fixed idle-loop breathing animation while recording.
+    spawn_local(async move {
+        let mut events = match tauri_sys::event::listen::<AudioLevel>("audio:level").await {
+            Ok(stream) => stream,
+            Err(e) => {
+                error_message.set(Some(format!(
+                    "failed to listen for audio level events: {e}"
+                )));
+                return;
+            }
+        };
+        while let Some(event) = events.next().await {
+            audio_level.set(event.payload.level);
+        }
+    });
+
     spawn_local(async move {
         let args = ListSessionsArgs {
             limit: Some(20),
@@ -534,6 +566,7 @@ fn App() -> impl IntoView {
                     Ok(id) => {
                         session_id.set(Some(id));
                         recording.set(false);
+                        audio_level.set(0.0);
                         spawn_local(async move {
                             let args = ListSessionsArgs {
                                 limit: Some(20),
@@ -947,6 +980,11 @@ fn App() -> impl IntoView {
                         class:is-recording=move || record_state.get() == RecordState::Recording
                         class:is-processing=move || record_state.get() == RecordState::Processing
                         class:is-disabled=move || record_state.get() == RecordState::Disabled
+                        // Swaps the fixed idle-loop breathing (styles.css) for
+                        // the mic's real level once recording is live — see
+                        // the `--pv-amp` seam comment there.
+                        class:has-live-level=move || recording.get()
+                        style:--pv-amp=move || pv_amp().to_string()
                         on:click=toggle_recording
                         disabled=move || busy.get()
                         aria-pressed=move || if recording.get() { "true" } else { "false" }
