@@ -850,7 +850,7 @@ fn App() -> impl IntoView {
 
             {move || {
                 error_message.get().map(|msg| view! {
-                    <p class="error"><TriangleAlert/> <span>{msg}</span></p>
+                    <p class="error" role="alert"><TriangleAlert/> <span>{msg}</span></p>
                 })
             }}
 
@@ -863,7 +863,12 @@ fn App() -> impl IntoView {
                 // action bar leave behind, and it is the only thing that scrolls.
                 // No heading — a chat log doesn't need labelling, so the
                 // accessible name moves to the region itself.
-                <section class="transcript" node_ref=transcript_ref aria-label="Transcript">
+                <section
+                    class="transcript"
+                    node_ref=transcript_ref
+                    aria-label="Transcript"
+                    aria-live="polite"
+                >
                     {move || {
                         let lines = transcript_lines.get();
                         if lines.is_empty() {

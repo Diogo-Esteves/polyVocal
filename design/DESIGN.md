@@ -408,18 +408,15 @@ already know what a Whisper model is.
 
 Built today: OS-native font stack that respects user text scaling, a
 three-state theme toggle, `prefers-reduced-motion` on the recording dot,
-visible focus rings on buttons and selects, and icons that are all
-`aria-hidden` with a paired text label — so no icon carries meaning alone.
+visible focus rings on buttons and selects, icons that are all
+`aria-hidden` with a paired text label — so no icon carries meaning alone —
+`aria-live="polite"` on the transcript region so live segments are
+announced, `role="alert"` on the error line, `aria-pressed` on the record
+toggle reflecting recording state, and 44×44px minimum touch targets on the
+icon-only header controls and the record button.
 
 Required by this design and **not** built today:
 
-- `aria-live="polite"` on the transcript region. Live segments currently
-  arrive with no announcement, so a screen-reader user never learns that
-  speech was transcribed.
-- `role="alert"` on the error line, so failures are announced rather than
-  silently painted.
-- 44×44px minimum touch targets. Current buttons are ~38px.
-- `aria-pressed` on the record toggle, reflecting recording state.
 - Focus must move into a sheet when it opens, be trapped while open, and
   return to the invoking control on close.
 
