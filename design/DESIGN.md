@@ -249,7 +249,12 @@ pulse and the strands hold a static extended pose.
 
 ---
 
-## Layout `[spec]`
+## Layout `[partly built]`
+
+Built today: the single centred column that fills the viewport, the action
+bar pinned to its bottom, `overflow-wrap: anywhere` on transcript text, and
+44×44px header controls. The column caps at 640px rather than 480px, and
+the breakpoint table below is still `[spec]` — the responsive system is #78.
 
 **One layout tree for desktop and mobile.** A single column, `max-width:
 480px`, centred, with a fixed action bar at the bottom. Phones get it
@@ -270,17 +275,24 @@ anywhere` (transcripts contain arbitrary user speech in arbitrary scripts).
 
 ---
 
-## Key Screens `[spec]`
+## Key Screens `[partly built]`
 
-Today the app is one scrolling page of seven stacked sections, with
-**Recent Sessions above the live Transcript** — while you are recording,
-you watch a list of old sessions while your words render off-screen below.
-That inversion is the core problem this structure fixes.
+The app used to be one scrolling page of seven stacked sections, with
+**Recent Sessions above the live Transcript** — while you were recording,
+you watched a list of old sessions while your words rendered off-screen
+below. Record (below) fixes that inversion; Session, History and Settings
+are still `[spec]`.
 
-### Record — home
+### Record — home `[built]`
 
 Transcript flows upward, newest at the bottom, like a chat log. Everyone
 already knows how to read this.
+
+Shipped in #72, with two deliberate interim compromises until the screens
+below exist: History is a header toggle that takes the main area over rather
+than a sheet (#73), and the translate control still lives under the
+transcript — rendered only once there is a session to translate — rather
+than on the session (#74).
 
 ```
 ┌──────────────────────────────┐
