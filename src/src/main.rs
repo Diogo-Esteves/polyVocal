@@ -248,6 +248,12 @@ struct ExportSessionTxtArgs<'a> {
     id: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportSessionSrtArgs<'a> {
+    id: &'a str,
+}
+
 /// How many of the (newest-first) sessions the history list shows before the
 /// user asks for the rest. Keeps "Recent Sessions" from pushing the live
 /// transcript and translation off the bottom of the screen.
@@ -646,6 +652,7 @@ fn App() -> impl IntoView {
                                     let confirm_class_id = id.clone();
                                     let label_id = id.clone();
                                     let export_id = id.clone();
+                                    let export_srt_id = id.clone();
                                     let preview: String = if session.transcript.chars().count() > 80 {
                                         let truncated: String = session.transcript.chars().take(80).collect();
                                         format!("{truncated}…")
@@ -680,7 +687,22 @@ fn App() -> impl IntoView {
                                                         });
                                                     }
                                                 >
-                                                    "Export"
+                                                    "Export TXT"
+                                                </button>
+                                                <button
+                                                    class="session-export"
+                                                    on:click=move |_| {
+                                                        let id_to_export = export_srt_id.clone();
+                                                        spawn_local(async move {
+                                                            let args = ExportSessionSrtArgs { id: &id_to_export };
+                                                            match tauri_sys::core::invoke_result::<Option<String>, String>("export_session_srt", args).await {
+                                                                Ok(_) => error_message.set(None),
+                                                                Err(e) => error_message.set(Some(e)),
+                                                            }
+                                                        });
+                                                    }
+                                                >
+                                                    "Export SRT"
                                                 </button>
                                                 <button
                                                     class="session-delete"
