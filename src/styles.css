@@ -17,48 +17,105 @@
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans",
     "Helvetica Neue", Arial, sans-serif;
 
-  --color-bg: #ffffff;
-  --color-surface: #f4f4f5;
-  --color-text: #18181b;
-  --color-text-muted: #52525b;
-  --color-border: #d4d4d8;
-  --color-accent: #1d4ed8;
-  --color-accent-contrast: #ffffff;
-  --color-danger: #b91c1c;
-  --color-danger-contrast: #ffffff;
-  --color-danger-bg: #fee2e2;
-  --focus-ring: #1d4ed8;
+  /* Type scale. Never a px font size — the app must scale with the OS. */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+
+  /* Spacing — 4px scale. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-7: 1.75rem;
+  --space-8: 2rem;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-full: 9999px;
+
+  /* Motion. */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 1400ms;
+
+  /* Warm brand palette — light. Values are measured, see design/DESIGN.md. */
+  --color-bg: #f7f2e7;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #efe7d7;
+  --color-text: #2a2420;
+  --color-text-muted: #6b5f52;
+  --color-hairline: #e4dac6;
+  --color-border: #8a7b66;
+  --color-primary: #8a5a32;
+  --color-primary-contrast: #fff9ef;
+  --color-recording: #c25a3e;
+  --color-danger: #a3231b;
+  --color-danger-bg: #f7ddd6;
+  --focus-ring: #8a5a32;
+
+  /* Strands, darkened so a meter built from them stays ≥3:1 on bg. */
+  --strand-1: #3f7d79;
+  --strand-2: #c25a3e;
+  --strand-3: #a87c22;
+  --strand-4: #5f7f52;
+
+  /* One elevation only — sheets and the record button. Flat everywhere else. */
+  --shadow-elevated: 0 2px 8px rgb(42 36 32 / 0.1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --color-bg: #0b0b0f;
-    --color-surface: #1c1c22;
-    --color-text: #f4f4f5;
-    --color-text-muted: #a1a1aa;
-    --color-border: #3f3f46;
-    --color-accent: #60a5fa;
-    --color-accent-contrast: #0b1220;
-    --color-danger: #f87171;
-    --color-danger-contrast: #2a0b0b;
-    --color-danger-bg: #3a1616;
-    --focus-ring: #60a5fa;
+    --color-bg: #16130f;
+    --color-surface: #211d18;
+    --color-surface-sunken: #0f0d0a;
+    --color-text: #f4eee2;
+    --color-text-muted: #b5a895;
+    --color-hairline: #302a22;
+    --color-border: #7a6e5d;
+    --color-primary: #d9a06b;
+    --color-primary-contrast: #1a130c;
+    --color-recording: #e8836b;
+    --color-danger: #f2857b;
+    --color-danger-bg: #3a1a16;
+    --focus-ring: #d9a06b;
+
+    /* The logo's original brights already clear 3:1 on near-black. */
+    --strand-1: #7fb3b0;
+    --strand-2: #e8836b;
+    --strand-3: #efc05f;
+    --strand-4: #9baf8e;
+
+    --shadow-elevated: 0 2px 8px rgb(0 0 0 / 0.4);
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --color-bg: #0b0b0f;
-  --color-surface: #1c1c22;
-  --color-text: #f4f4f5;
-  --color-text-muted: #a1a1aa;
-  --color-border: #3f3f46;
-  --color-accent: #60a5fa;
-  --color-accent-contrast: #0b1220;
-  --color-danger: #f87171;
-  --color-danger-contrast: #2a0b0b;
-  --color-danger-bg: #3a1616;
-  --focus-ring: #60a5fa;
+  --color-bg: #16130f;
+  --color-surface: #211d18;
+  --color-surface-sunken: #0f0d0a;
+  --color-text: #f4eee2;
+  --color-text-muted: #b5a895;
+  --color-hairline: #302a22;
+  --color-border: #7a6e5d;
+  --color-primary: #d9a06b;
+  --color-primary-contrast: #1a130c;
+  --color-recording: #e8836b;
+  --color-danger: #f2857b;
+  --color-danger-bg: #3a1a16;
+  --focus-ring: #d9a06b;
+
+  --strand-1: #7fb3b0;
+  --strand-2: #e8836b;
+  --strand-3: #efc05f;
+  --strand-4: #9baf8e;
+
+  --shadow-elevated: 0 2px 8px rgb(0 0 0 / 0.4);
 }
 
 :root[data-theme="light"] {
@@ -121,7 +178,7 @@ button {
   align-items: center;
   gap: 0.5rem;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 0.6rem 1rem;
   background: var(--color-surface);
   color: var(--color-text);
@@ -129,7 +186,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--color-accent);
+  border-color: var(--color-primary);
 }
 
 button:disabled {
@@ -144,15 +201,15 @@ select:focus-visible {
 }
 
 .record-toggle {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-accent-contrast);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-contrast);
 }
 
 .record-toggle.is-recording {
-  background: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-danger-contrast);
+  background: var(--color-recording);
+  border-color: var(--color-recording);
+  color: var(--color-primary-contrast);
 }
 
 .header-actions {
@@ -168,8 +225,8 @@ select:focus-visible {
 }
 
 .settings-toggle.is-active {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .controls {
@@ -194,8 +251,8 @@ select:focus-visible {
   width: 0.6rem;
   height: 0.6rem;
   border-radius: 50%;
-  background: var(--color-danger);
-  animation: pulse 1.4s ease-in-out infinite;
+  background: var(--color-recording);
+  animation: pulse var(--motion-slow) ease-in-out infinite;
 }
 
 @keyframes pulse {
@@ -218,13 +275,18 @@ select:focus-visible {
 .translated {
   min-height: 4rem;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 0.75rem;
   background: var(--color-surface);
 }
 
+.transcript-lines {
+  font-size: var(--text-xl);
+}
+
 .translated {
   min-height: 2rem;
+  font-size: var(--text-lg);
 }
 
 .translate-status {
@@ -239,14 +301,14 @@ select:focus-visible {
   gap: 0.5rem;
   color: var(--color-danger);
   background: var(--color-danger-bg);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 0.6rem 0.75rem;
 }
 
 select {
   font: inherit;
   padding: 0.5rem;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
@@ -273,7 +335,7 @@ select {
   justify-content: space-between;
   gap: 1rem;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 0.75rem;
   background: var(--color-surface);
 }
@@ -285,7 +347,7 @@ select {
 .model-active {
   flex-shrink: 0;
   font-size: 0.85rem;
-  color: var(--color-accent);
+  color: var(--color-primary);
 }
 
 .model-download,
