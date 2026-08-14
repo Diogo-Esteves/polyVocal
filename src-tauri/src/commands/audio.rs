@@ -59,6 +59,35 @@ struct TranscriptSegmentEvent {
     end_ms: i64,
 }
 
+/// Payload for the `audio:level` event (#76) — a single smoothed RMS
+/// amplitude in `[0, 1]`, emitted at [`LEVEL_EMIT_RATE_HZ`] while recording
+/// so the frontend can drive the record button's `--pv-amp` strand meter
+/// instead of its fixed idle-loop placeholder.
+#[derive(Serialize, Clone)]
+struct AudioLevelEvent {
+    level: f32,
+}
+
+/// Target rate for `audio:level` emissions — the frontend only needs enough
+/// of them to read as live motion, and every emission is extra work on the
+/// same task that drains the capture channel (issue #45), so this stays
+/// deliberately low.
+const LEVEL_EMIT_RATE_HZ: u32 = 20;
+
+/// One-pole smoothing factor applied to each chunk's RMS before emission, so
+/// the meter reads as one continuous level rather than jittering chunk to
+/// chunk.
+const LEVEL_SMOOTHING_ALPHA: f32 = 0.3;
+
+/// Root-mean-square amplitude of a chunk of mono f32 PCM samples, in `[0, 1]`
+/// for well-formed audio.
+fn rms_level(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
 #[tauri::command]
 pub async fn list_input_devices() -> Result<Vec<crate::audio::InputDevice>, String> {
     device::list_input_devices().map_err(|e| e.to_string())
@@ -153,7 +182,29 @@ pub async fn start_recording(
         let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
         let mut rx = rx;
 
+        // Live level meter (#76): computed from the resampled chunk this
+        // task already dequeued for VAD/transcription — no second consumer
+        // of the capture channel, and no work added to the capture callback
+        // itself (see #45 on why that path stays untouched).
+        let mut smoothed_level = 0.0_f32;
+        let level_emit_interval =
+            std::time::Duration::from_secs_f64(1.0 / LEVEL_EMIT_RATE_HZ as f64);
+        let mut last_level_emit = std::time::Instant::now() - level_emit_interval;
+
         while let Some(chunk) = rx.recv().await {
+            smoothed_level += LEVEL_SMOOTHING_ALPHA * (rms_level(&chunk) - smoothed_level);
+            if last_level_emit.elapsed() >= level_emit_interval {
+                last_level_emit = std::time::Instant::now();
+                if let Err(e) = app.emit(
+                    "audio:level",
+                    &AudioLevelEvent {
+                        level: smoothed_level,
+                    },
+                ) {
+                    tracing::error!("failed to emit audio:level: {e}");
+                }
+            }
+
             for frame in chunker.push(&chunk) {
                 match pipeline.push_frame(&frame) {
                     Ok(Some(ClosedSegment {
@@ -399,6 +450,29 @@ mod tests {
     use super::*;
     use crate::storage::models::SESSION_STATUS_COMPLETE;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn rms_level_of_silence_is_zero() {
+        assert_eq!(rms_level(&[0.0, 0.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn rms_level_of_empty_chunk_is_zero() {
+        assert_eq!(rms_level(&[]), 0.0);
+    }
+
+    #[test]
+    fn rms_level_of_full_scale_square_wave_is_one() {
+        assert!((rms_level(&[1.0, -1.0, 1.0, -1.0]) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rms_level_ignores_sign() {
+        let positive = rms_level(&[0.5, 0.5, 0.5]);
+        let negative = rms_level(&[-0.5, -0.5, -0.5]);
+        assert!((positive - negative).abs() < 1e-6);
+        assert!((positive - 0.5).abs() < 1e-6);
+    }
 
     async fn test_pool() -> SqlitePool {
         // A single connection: sqlx pools each connection to a distinct
