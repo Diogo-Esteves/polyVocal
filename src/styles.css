@@ -319,6 +319,14 @@ select {
   flex-shrink: 0;
 }
 
+/* Expand/collapse affordance under a capped session list — quieter and
+   tighter than the primary buttons, since it's navigation, not an action. */
+.sessions-toggle {
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+}
+
 .session-delete.is-confirming {
   background: var(--color-danger-bg);
   border-color: var(--color-danger);
