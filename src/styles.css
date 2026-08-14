@@ -312,6 +312,10 @@ select {
   display: flex;
   gap: 0.5rem;
   flex-shrink: 0;
+  /* Three buttons (Export TXT / Export SRT / Delete) can outgrow a narrow
+     window; wrap them to a second line instead of overflowing the item. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .session-export,
