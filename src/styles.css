@@ -53,6 +53,9 @@
   --color-border: #8a7b66;
   --color-primary: #8a5a32;
   --color-primary-contrast: #fff9ef;
+  /* One step darker than the wood — the mark's bristle pad (DESIGN.md calls
+   * this `--wood-dark`; named for the palette it actually lives in). */
+  --color-primary-shade: #6b4526;
   --color-recording: #c25a3e;
   --color-danger: #a3231b;
   --color-danger-bg: #f7ddd6;
@@ -79,6 +82,7 @@
     --color-border: #7a6e5d;
     --color-primary: #d9a06b;
     --color-primary-contrast: #1a130c;
+    --color-primary-shade: #a97d53;
     --color-recording: #e8836b;
     --color-danger: #f2857b;
     --color-danger-bg: #3a1a16;
@@ -105,6 +109,7 @@
   --color-border: #7a6e5d;
   --color-primary: #d9a06b;
   --color-primary-contrast: #1a130c;
+  --color-primary-shade: #a97d53;
   --color-recording: #e8836b;
   --color-danger: #f2857b;
   --color-danger-bg: #3a1a16;
@@ -144,6 +149,18 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+
+/* Mark + wordmark lockup. The mark carries its own px size (it is a detail
+ * variant, not a font-relative glyph), so it never scales with the heading. */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pv-mark {
+  flex-shrink: 0;
 }
 
 h1 {
