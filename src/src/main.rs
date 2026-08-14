@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use futures::StreamExt;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -96,26 +98,6 @@ mod icons {
     use leptos::prelude::*;
 
     #[component]
-    pub fn Mic() -> impl IntoView {
-        view! {
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 19v3"/>
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                <rect x="9" y="2" width="6" height="13" rx="3"/>
-            </svg>
-        }
-    }
-
-    #[component]
-    pub fn StopSquare() -> impl IntoView {
-        view! {
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect width="18" height="18" x="3" y="3" rx="2"/>
-            </svg>
-        }
-    }
-
-    #[component]
     pub fn Languages() -> impl IntoView {
         view! {
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -189,7 +171,7 @@ mod icons {
         }
     }
 }
-use icons::{Languages, Mic, Moon, Settings, StopSquare, Sun, SunMoon, TriangleAlert};
+use icons::{Languages, Moon, Settings, Sun, SunMoon, TriangleAlert};
 
 /// The PolyVocal mark — the hairbrush, rebuilt as inline SVG so it themes,
 /// stays crisp at any size, and exposes each strand as its own path. Geometry
@@ -249,6 +231,46 @@ fn PolyVocalMark(#[prop(default = 24)] size: u32) -> impl IntoView {
             </g>
         </svg>
     }
+}
+
+/// The four record-button states from `../design/DESIGN.md` → *The Record
+/// Button*, each with its own ring colour, mark treatment, strand behaviour
+/// and label.
+///
+/// Derived from the two signals the app already has rather than from new
+/// backend state. `busy` is set synchronously when the button is clicked,
+/// while `recording` only flips once the awaited command returns, so the
+/// pair already separates the two in-flight windows:
+///
+/// | `recording` | `busy` | State | Meaning |
+/// |---|---|---|---|
+/// | false | false | `Idle` | nothing in flight |
+/// | false | true | `Disabled` | `start_recording` is awaiting — capture hasn't opened yet |
+/// | true | false | `Recording` | capture is live |
+/// | true | true | `Processing` | Stop was pressed; transcription and persistence are finishing |
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecordState {
+    Idle,
+    Recording,
+    Processing,
+    Disabled,
+}
+
+impl RecordState {
+    fn from_signals(recording: bool, busy: bool) -> Self {
+        match (recording, busy) {
+            (true, true) => RecordState::Processing,
+            (true, false) => RecordState::Recording,
+            (false, true) => RecordState::Disabled,
+            (false, false) => RecordState::Idle,
+        }
+    }
+}
+
+/// `M:SS` for the recording label. Deliberately not zero-padded on the
+/// minutes — the label reads "0:05 · Tap to stop", not "00:05".
+fn format_elapsed(seconds: u32) -> String {
+    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 /// Mirrors the `transcript:segment` event payload emitted by the Rust
@@ -386,6 +408,27 @@ fn App() -> impl IntoView {
 
     let recording = RwSignal::new(false);
     let busy = RwSignal::new(false);
+    let record_state = Memo::new(move |_| RecordState::from_signals(recording.get(), busy.get()));
+    // Seconds since capture opened, for the recording label. The backend
+    // tracks its own `started_at` for `duration_ms`, but never surfaces it,
+    // so this counts locally: one interval, started when `recording` goes
+    // true and cleared when it goes false. Tick-counted rather than read off
+    // a clock — a second's drift on a label is not worth a `js-sys` dep.
+    let elapsed_secs = RwSignal::new(0_u32);
+    Effect::new(move |previous: Option<Option<IntervalHandle>>| {
+        if let Some(Some(handle)) = previous {
+            handle.clear();
+        }
+        if !recording.get() {
+            return None;
+        }
+        elapsed_secs.set(0);
+        set_interval_with_handle(
+            move || elapsed_secs.update(|secs| *secs += 1),
+            Duration::from_secs(1),
+        )
+        .ok()
+    });
     let session_id = RwSignal::new(None::<String>);
     let transcript_lines = RwSignal::new(Vec::<String>::new());
     let detected_language = RwSignal::new(None::<String>);
@@ -624,24 +667,39 @@ fn App() -> impl IntoView {
             })}
 
             <section class="controls">
-                <button
-                    class="record-toggle"
-                    class:is-recording=move || recording.get()
-                    on:click=toggle_recording
-                    disabled=move || busy.get()
-                >
-                    {move || if recording.get() {
-                        view! { <StopSquare/> <span>"Stop"</span> }.into_any()
-                    } else {
-                        view! { <Mic/> <span>"Record"</span> }.into_any()
-                    }}
-                </button>
-                {move || recording.get().then(|| view! {
-                    <span class="recording-indicator">
-                        <span class="recording-dot"></span>
-                        "Recording"
+                // The mark is the button — sized by CSS off the button's own
+                // diameter (56%), so the 88/96px breakpoint lives entirely in
+                // styles.css. The `size` prop only has to stay above 24 for
+                // the full-detail variant, which is what it renders at here.
+                <div class="record-control">
+                    <button
+                        class="record-button"
+                        class:is-recording=move || record_state.get() == RecordState::Recording
+                        class:is-processing=move || record_state.get() == RecordState::Processing
+                        class:is-disabled=move || record_state.get() == RecordState::Disabled
+                        on:click=toggle_recording
+                        disabled=move || busy.get()
+                        aria-pressed=move || if recording.get() { "true" } else { "false" }
+                        aria-labelledby="record-label"
+                    >
+                        <PolyVocalMark size=54/>
+                    </button>
+                    // The button carries no text of its own, so this visible
+                    // label *is* its accessible name (`aria-labelledby`) —
+                    // never an icon alone. It also carries recording state and
+                    // the timer independently of any animation, which is what
+                    // keeps the reduced-motion path lossless.
+                    <span class="record-label" id="record-label">
+                        {move || match record_state.get() {
+                            RecordState::Idle => "Tap to record".to_string(),
+                            RecordState::Recording => {
+                                format!("{} · Tap to stop", format_elapsed(elapsed_secs.get()))
+                            }
+                            RecordState::Processing => "Transcribing…".to_string(),
+                            RecordState::Disabled => "Starting…".to_string(),
+                        }}
                     </span>
-                })}
+                </div>
                 <span class="language">
                     "Detected language: "
                     {move || detected_language.get().unwrap_or_else(|| "—".to_string())}

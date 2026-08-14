@@ -217,16 +217,157 @@ select:focus-visible {
   outline-offset: 2px;
 }
 
-.record-toggle {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-primary-contrast);
+/* The record button — design/DESIGN.md → *The Record Button*. A circular
+ * target with the mark at its centre, deliberately not a chip like Export and
+ * Delete: 88px on mobile, 96px from the 480px breakpoint up, surface fill,
+ * 2px ring whose colour is the state, one elevation step.
+ *
+ * `--pv-amp` is registered so it interpolates inside @keyframes instead of
+ * stepping between stops. It is the amplitude seam: 0 is the strands' drawn
+ * rest pose, 1 is fully extended. Today nothing measures the microphone (the
+ * backend emits no level event — #76), so the recording state animates it on
+ * a fixed loop: honest as "we are listening", not a meter. When a real level
+ * arrives, setting `--pv-amp` on the button and dropping the loop animation
+ * is the whole change — no strand geometry moves. */
+@property --pv-amp {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
 }
 
-.record-toggle.is-recording {
-  background: var(--color-recording);
-  border-color: var(--color-recording);
-  color: var(--color-primary-contrast);
+.record-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.record-button {
+  --record-ring: var(--color-primary);
+
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  position: relative;
+  justify-content: center;
+  border: 2px solid var(--record-ring);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-elevated);
+  transition:
+    border-color var(--motion-base) ease,
+    transform var(--motion-fast) ease;
+}
+
+/* The only breakpoint DESIGN.md → Layout defines below 900px; the desktop
+ * diameter rides on it rather than inventing a second one. */
+@media (min-width: 480px) {
+  .record-button {
+    width: 96px;
+    height: 96px;
+  }
+}
+
+/* Override the generic button rules: the ring colour is the state, so hover
+ * must not repaint it, and Processing is disabled without being dimmed. */
+.record-button:hover:not(:disabled) {
+  border-color: var(--record-ring);
+}
+
+.record-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.record-button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.record-button .pv-mark {
+  width: 56%;
+  height: 56%;
+}
+
+.record-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  /* The timer ticks in place instead of jittering the label's width. */
+  font-variant-numeric: tabular-nums;
+}
+
+.record-button.is-recording {
+  --record-ring: var(--color-recording);
+}
+
+.record-button.is-disabled {
+  --record-ring: var(--color-border);
+  cursor: not-allowed;
+}
+
+.record-button.is-disabled .pv-mark {
+  opacity: 0.5;
+}
+
+/* Recording: the ring pulses outward on its own layer so the button's own
+ * 2px ring stays solid underneath. */
+.record-button.is-recording::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--color-recording);
+  border-radius: var(--radius-full);
+  pointer-events: none;
+  animation: record-ring-pulse var(--motion-slow) ease-out infinite;
+}
+
+@keyframes record-ring-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.22);
+    opacity: 0;
+  }
+}
+
+/* The strands scale from where they spring — the paddle's right edge, ~17,12
+ * on the mark's `0 0 32 32` grid — so they lengthen and spread outward rather
+ * than swelling from the middle of the brush. */
+.record-button .pv-strands {
+  transform-box: view-box;
+  transform-origin: 53% 38%;
+  transform: scale(calc(1 + 0.22 * var(--pv-amp, 0)));
+}
+
+.record-button.is-recording .pv-strands {
+  animation: pv-strand-breathe 2s ease-in-out infinite;
+}
+
+@keyframes pv-strand-breathe {
+  0%,
+  100% {
+    --pv-amp: 0.15;
+  }
+  50% {
+    --pv-amp: 0.9;
+  }
+}
+
+/* Processing: a slower shimmer over the strands, opacity rather than scale,
+ * so it never reads as the recording breath. */
+.record-button.is-processing .pv-strands {
+  animation: pv-strand-shimmer calc(var(--motion-slow) * 2) ease-in-out infinite;
+}
+
+@keyframes pv-strand-shimmer {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .header-actions {
@@ -257,34 +398,25 @@ select:focus-visible {
   color: var(--color-text-muted);
 }
 
-.recording-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--color-text-muted);
-}
+/* Every animation here is decorative: the record label carries the state and
+ * the timer in text, so switching them all off loses nothing. The ring stays
+ * a solid recording colour without the pulse, and the strands hold a static
+ * extended pose instead of breathing or shimmering. */
+@media (prefers-reduced-motion: reduce) {
+  .record-button.is-recording::after {
+    display: none;
+  }
 
-.recording-dot {
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-  background: var(--color-recording);
-  animation: pulse var(--motion-slow) ease-in-out infinite;
-}
+  .record-button.is-recording .pv-strands,
+  .record-button.is-processing .pv-strands {
+    --pv-amp: 0.6;
 
-@keyframes pulse {
-  0%,
-  100% {
+    animation: none;
     opacity: 1;
   }
-  50% {
-    opacity: 0.35;
-  }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .recording-dot {
-    animation: none;
+  .record-button:active:not(:disabled) {
+    transform: none;
   }
 }
 
