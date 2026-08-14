@@ -248,6 +248,11 @@ struct ExportSessionTxtArgs<'a> {
     id: &'a str,
 }
 
+/// How many of the (newest-first) sessions the history list shows before the
+/// user asks for the rest. Keeps "Recent Sessions" from pushing the live
+/// transcript and translation off the bottom of the screen.
+const SESSION_PREVIEW_COUNT: usize = 3;
+
 /// MVP language pairs, matching `translation::SUPPORTED_LANGUAGES` in the backend.
 const TARGET_LANGUAGES: [(&str, &str); 3] =
     [("en", "English"), ("pt", "Portuguese"), ("es", "Spanish")];
@@ -329,6 +334,9 @@ fn App() -> impl IntoView {
     let sessions = RwSignal::new(Vec::<Session>::new());
     let sessions_loading = RwSignal::new(true);
     let pending_delete_id = RwSignal::new(None::<String>);
+    // The history list is collapsed to the newest few by default so the live
+    // transcript/translation stay in view — see SESSION_PREVIEW_COUNT.
+    let sessions_expanded = RwSignal::new(false);
 
     // Purely reactive per DEC-007: listen for live transcript segments,
     // never poll a status command.
@@ -577,6 +585,44 @@ fn App() -> impl IntoView {
                 })
             }}
 
+            <section class="transcript">
+                <h2>"Transcript"</h2>
+                <div class="transcript-lines">
+                    {move || {
+                        transcript_lines
+                            .get()
+                            .into_iter()
+                            .map(|line| view! { <p>{line}</p> })
+                            .collect_view()
+                    }}
+                </div>
+            </section>
+
+            <section class="translate">
+                <h2><Languages/> <span>"Translate"</span></h2>
+                <div class="controls">
+                    <select
+                        prop:value=move || target_lang.get()
+                        on:change=move |ev| target_lang.set(event_target_value(&ev))
+                    >
+                        {TARGET_LANGUAGES
+                            .iter()
+                            .map(|(code, label)| view! { <option value=*code>{*label}</option> })
+                            .collect_view()}
+                    </select>
+                    <button
+                        on:click=do_translate
+                        disabled=move || session_id.get().is_none() || translating.get()
+                    >
+                        {move || if translating.get() { "Translating…" } else { "Translate" }}
+                    </button>
+                </div>
+                {move || translating.get().then(|| view! {
+                    <p class="translate-status">"Running locally — usually a few seconds, longer the first time a language pair's model needs downloading."</p>
+                })}
+                <p class="translated">{move || translated_text.get().unwrap_or_default()}</p>
+            </section>
+
             <section class="sessions">
                 <h2>"Recent Sessions"</h2>
                 {move || {
@@ -585,9 +631,16 @@ fn App() -> impl IntoView {
                     } else if sessions.get().is_empty() {
                         view! { <p class="sessions-empty">"No sessions yet."</p> }.into_any()
                     } else {
+                        let all = sessions.get();
+                        let total = all.len();
+                        let visible: Vec<Session> = if sessions_expanded.get() {
+                            all
+                        } else {
+                            all.into_iter().take(SESSION_PREVIEW_COUNT).collect()
+                        };
                         view! {
                             <ul class="session-list">
-                                {sessions.get().into_iter().map(|session| {
+                                {visible.into_iter().map(|session| {
                                     let id = session.id.clone();
                                     let delete_id = id.clone();
                                     let confirm_class_id = id.clone();
@@ -654,47 +707,21 @@ fn App() -> impl IntoView {
                                     }
                                 }).collect_view()}
                             </ul>
+                            {(total > SESSION_PREVIEW_COUNT).then(|| view! {
+                                <button
+                                    class="sessions-toggle"
+                                    on:click=move |_| sessions_expanded.update(|open| *open = !*open)
+                                >
+                                    {move || if sessions_expanded.get() {
+                                        "Show less".to_string()
+                                    } else {
+                                        format!("View all {total} sessions")
+                                    }}
+                                </button>
+                            })}
                         }.into_any()
                     }
                 }}
-            </section>
-
-            <section class="transcript">
-                <h2>"Transcript"</h2>
-                <div class="transcript-lines">
-                    {move || {
-                        transcript_lines
-                            .get()
-                            .into_iter()
-                            .map(|line| view! { <p>{line}</p> })
-                            .collect_view()
-                    }}
-                </div>
-            </section>
-
-            <section class="translate">
-                <h2><Languages/> <span>"Translate"</span></h2>
-                <div class="controls">
-                    <select
-                        prop:value=move || target_lang.get()
-                        on:change=move |ev| target_lang.set(event_target_value(&ev))
-                    >
-                        {TARGET_LANGUAGES
-                            .iter()
-                            .map(|(code, label)| view! { <option value=*code>{*label}</option> })
-                            .collect_view()}
-                    </select>
-                    <button
-                        on:click=do_translate
-                        disabled=move || session_id.get().is_none() || translating.get()
-                    >
-                        {move || if translating.get() { "Translating…" } else { "Translate" }}
-                    </button>
-                </div>
-                {move || translating.get().then(|| view! {
-                    <p class="translate-status">"Running locally — usually a few seconds, longer the first time a language pair's model needs downloading."</p>
-                })}
-                <p class="translated">{move || translated_text.get().unwrap_or_default()}</p>
             </section>
         </main>
     }
