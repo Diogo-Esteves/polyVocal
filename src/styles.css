@@ -147,10 +147,23 @@ body {
   overflow: hidden;
 }
 
+/* The outer shell: the record screen plus, from 900px, the History rail
+ * beside it (design/DESIGN.md → *Layout*). Below 900px this is just a
+ * single-child flex container and does nothing visible on its own. */
+.shell {
+  display: flex;
+  height: 100dvh;
+}
+
 /* One layout tree (design/DESIGN.md → *Layout*): a single centred column that
  * fills the viewport, with the transcript taking every pixel the header, the
  * action bar and any open panel leave behind. The bar is pinned by the column
- * rather than by `position: fixed`, so it can never overlap content. */
+ * rather than by `position: fixed`, so it can never overlap content.
+ *
+ * Unchanged by the 900px rail breakpoint below — `.app`'s own `margin: 0
+ * auto` still centres it in whatever width `.shell` leaves it once
+ * `.history-rail` claims its 280px, which is what "nothing else changes"
+ * (design/DESIGN.md → *Layout*) means in practice. */
 .app {
   display: flex;
   flex-direction: column;
@@ -159,6 +172,134 @@ body {
   max-width: 640px;
   margin: 0 auto;
   padding: 0 var(--space-6);
+}
+
+/* The persistent History rail — design/DESIGN.md → *Layout*: "At >= 900px
+ * History promotes from a sheet to a persistent left rail (280px)." Hidden
+ * below that width, where History is the sheet in `.history-sheet` instead;
+ * the two render the same `SessionList` component, never two designs to
+ * keep in sync. Not modal (no backdrop, no focus trap) — it's always part
+ * of the page, not a transient overlay. */
+.history-rail {
+  display: none;
+  flex-direction: column;
+  width: 280px;
+  flex-shrink: 0;
+  height: 100dvh;
+  padding: var(--space-6) var(--space-4);
+  overflow-y: auto;
+  border-right: 1px solid var(--color-hairline);
+}
+
+@media (min-width: 900px) {
+  .history-rail {
+    display: flex;
+  }
+
+  /* Redundant with History's toggle button, which no longer has anything
+   * to toggle once the rail is always on screen. */
+  .history-toggle {
+    display: none;
+  }
+}
+
+/* Sheets — design/DESIGN.md → *Interaction Patterns · Sheets, not pages*:
+ * History and Settings slide over the record screen and dismiss back to it.
+ * Always in the DOM (Sheet in main.rs never unmounts them) so the closing
+ * transition below has something to animate; `visibility` is what actually
+ * takes them out of the tab order and the accessibility tree while closed,
+ * not `display`, which couldn't transition at all.
+ *
+ * Sized and positioned exactly like `.app` (`max-width: 640px; margin: 0
+ * auto`, achieved here via the `inset: 0` + auto-margin trick for a fixed
+ * element) so a sheet reads as the same shell showing different content,
+ * per the "one layout tree" principle above — never a second design. */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-elevated);
+  visibility: hidden;
+  transform: translateX(100%);
+  transition:
+    transform var(--motion-base) ease,
+    visibility 0s var(--motion-base);
+}
+
+.sheet.is-open {
+  visibility: visible;
+  transform: translateX(0);
+  transition: transform var(--motion-base) ease;
+}
+
+/* The scrim behind a sheet. Only visible past 640px, where `.sheet` no
+ * longer fills the viewport — below that it's fully covered by the opaque
+ * sheet itself. Also the click target that dismisses the sheet. */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgb(0 0 0 / 0.32);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-base) ease,
+    visibility 0s var(--motion-base);
+}
+
+.sheet-backdrop.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity var(--motion-base) ease;
+}
+
+/* The History sheet is only ever the < 900px stand-in for the rail above —
+ * once the rail is on screen, its content already is too. */
+@media (min-width: 900px) {
+  .history-sheet,
+  .history-sheet-backdrop {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet,
+  .sheet-backdrop {
+    transition: none;
+  }
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-top: var(--space-6);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.sheet-back {
+  gap: 0.6rem;
+  border: none;
+  background: transparent;
+  padding: 0.5rem 0.25rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) 0 var(--space-6);
 }
 
 .app-header {
@@ -185,16 +326,6 @@ body {
 h1 {
   font-size: 1.5rem;
   margin: 0;
-}
-
-/* Settings and History take over the main area while open — they replace the
- * transcript rather than stacking above it, which is the nearest thing to the
- * sheets in #73 without building them. Each scrolls inside itself. */
-.settings,
-.sessions {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 h2 {
