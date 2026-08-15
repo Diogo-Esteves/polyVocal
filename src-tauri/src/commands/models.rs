@@ -113,7 +113,12 @@ mod tests {
     }
 
     impl ModelDownloader for FakeDownloader {
-        async fn download_to(&self, url: &str, dest: &Path) -> AnyhowResult<()> {
+        async fn download_to(
+            &self,
+            url: &str,
+            dest: &Path,
+            _expected_sha256: &str,
+        ) -> AnyhowResult<()> {
             self.calls
                 .lock()
                 .unwrap()

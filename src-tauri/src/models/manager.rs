@@ -73,7 +73,9 @@ impl ModelManager {
         }
 
         info!("Downloading {} ({} MB)", size.filename(), size.size_mb());
-        downloader.download_to(size.download_url(), &dest).await?;
+        downloader
+            .download_to(size.download_url(), &dest, size.sha256())
+            .await?;
         Ok(())
     }
 
@@ -91,7 +93,9 @@ impl ModelManager {
         let dest = self.vad_model_path(model);
         if !dest.exists() {
             info!("Downloading VAD model {}", model.filename());
-            downloader.download_to(model.download_url(), &dest).await?;
+            downloader
+                .download_to(model.download_url(), &dest, model.sha256())
+                .await?;
         }
         Ok(dest)
     }
@@ -133,7 +137,7 @@ impl ModelManager {
                 file
             );
             downloader
-                .download_to(&model.download_url(file), &dest)
+                .download_to(&model.download_url(file), &dest, model.sha256(file))
                 .await?;
         }
         Ok(dir)
@@ -174,7 +178,7 @@ mod tests {
     }
 
     impl ModelDownloader for FakeDownloader {
-        async fn download_to(&self, url: &str, dest: &Path) -> Result<()> {
+        async fn download_to(&self, url: &str, dest: &Path, _expected_sha256: &str) -> Result<()> {
             self.calls
                 .lock()
                 .unwrap()

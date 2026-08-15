@@ -24,17 +24,26 @@ impl ModelSize {
         // Hugging Face — ggerganov/whisper.cpp model files
         match self {
             ModelSize::Tiny => {
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin"
             }
             ModelSize::Base => {
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin"
             }
             ModelSize::Small => {
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin"
             }
             ModelSize::Medium => {
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.bin"
             }
+        }
+    }
+
+    pub fn sha256(&self) -> &'static str {
+        match self {
+            ModelSize::Tiny => "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+            ModelSize::Base => "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+            ModelSize::Small => "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+            ModelSize::Medium => "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
         }
     }
 
@@ -74,8 +83,14 @@ impl VadModel {
     pub fn download_url(&self) -> &'static str {
         match self {
             VadModel::Silero => {
-                "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"
+                "https://raw.githubusercontent.com/snakers4/silero-vad/76e3dc408eb2a5c655c34e230d2d5459b4439daa/src/silero_vad/data/silero_vad.onnx"
             }
+        }
+    }
+
+    pub fn sha256(&self) -> &'static str {
+        match self {
+            VadModel::Silero => "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
         }
     }
 }
@@ -129,19 +144,15 @@ impl TranslationModel {
         }
     }
 
-    /// Revision/ref to download files from. Defaults to `main`, except
-    /// where `main` has no `model.safetensors` yet — HuggingFace's
-    /// auto-conversion bot opens (and, for these repos, leaves unmerged) a
-    /// PR adding one, so we pull `model.safetensors` from that PR's ref
-    /// instead. `config.json`/`vocab.json`/`source.spm` are identical
-    /// between `main` and these PRs (only the weight format differs), so
-    /// this is safe to apply to every file, not just the weights.
+    /// Pinned to an immutable commit SHA rather than a mutable branch/PR ref,
+    /// so the bytes downloaded today are the bytes downloaded next year — see
+    /// issue #54.
     pub fn revision(&self) -> &'static str {
         match self {
-            TranslationModel::EnEs => "refs/pr/4",
-            TranslationModel::EsEn => "refs/pr/6",
-            TranslationModel::EnPt => "main",
-            TranslationModel::RomanceEn => "refs/pr/6",
+            TranslationModel::EnEs => "fdaddf76f50fcc1583ba42f95965862a7ab30f97",
+            TranslationModel::EsEn => "725b7965a8cac11ebe80ea671e72e0b7e8b28a9f",
+            TranslationModel::EnPt => "9f2863d807ecf91a374bdbecb8d01e402e90622e",
+            TranslationModel::RomanceEn => "ddfee805aaa57f4bd198f88e8832ba2b012f9ae2",
         }
     }
 
@@ -165,6 +176,65 @@ impl TranslationModel {
             "https://huggingface.co/{}/resolve/{revision}/{file}",
             self.hf_repo()
         )
+    }
+
+    /// Expected SHA256 of `file` at this model's pinned `revision()`, for
+    /// verifying downloaded bytes before they're fed to candle's mmapped
+    /// safetensors parser — see issue #54.
+    pub fn sha256(&self, file: &str) -> &'static str {
+        match (self, file) {
+            (TranslationModel::EnEs, "config.json") => {
+                "666ad3c2943674b6a789e311d221e44ec23e27f1bd9727930754bf773ec8e464"
+            }
+            (TranslationModel::EnEs, "vocab.json") => {
+                "257f346d7a6b2ecceafcca8ba05648ce2fd68dfaf105fb0e913dca7198f3f6d5"
+            }
+            (TranslationModel::EnEs, "source.spm") => {
+                "4dd547c24816a335e7b0b2e63376a8f1b3cbfc671eda5ab808dd44fdadaa8791"
+            }
+            (TranslationModel::EnEs, "model.safetensors") => {
+                "b3ecbf954573c2fd95d05d3ad4618baf961793db0da07c2add2e8a3a6cd78d0b"
+            }
+            (TranslationModel::EsEn, "config.json") => {
+                "374443eacf8986c21386503e2fcd52eae6952ac09c87fd36695f5c12259a4cd1"
+            }
+            (TranslationModel::EsEn, "vocab.json") => {
+                "257f346d7a6b2ecceafcca8ba05648ce2fd68dfaf105fb0e913dca7198f3f6d5"
+            }
+            (TranslationModel::EsEn, "source.spm") => {
+                "e236ee6d866b635c0142114f8647f39831f9d92534aa2aad75c942f6a78ad0e3"
+            }
+            (TranslationModel::EsEn, "model.safetensors") => {
+                "07d9fc8881ac9bc8f06fbe3576ca16045c684c7d529e9733cbeeaaf2c78f9539"
+            }
+            (TranslationModel::EnPt, "config.json") => {
+                "ca76b1818f066007e94fb2519c0752320cee36a5d4947bf7ef4477c845feacc5"
+            }
+            (TranslationModel::EnPt, "vocab.json") => {
+                "dad10ad0acbf34ad92af16cb37fd71732d2b73851274698d58c5439386b506a1"
+            }
+            (TranslationModel::EnPt, "source.spm") => {
+                "7a7fcf812cf03a5785daa35d4932bbbe69e7e605c0fe56fce5a3f731d6c355aa"
+            }
+            (TranslationModel::EnPt, "model.safetensors") => {
+                "f1772ec97f6cb5b942bb6a5555a04272960a228a523f7ed47e24014236aa1716"
+            }
+            (TranslationModel::RomanceEn, "config.json") => {
+                "b11b54220c28a64966b51864dd4bf9688a935c3b6a18bbab73810d391d6ac39f"
+            }
+            (TranslationModel::RomanceEn, "vocab.json") => {
+                "1ffaf15a0b51f0774c1dc24a1a675859dc18fc7705ebe6a0ac45a9c560457c29"
+            }
+            (TranslationModel::RomanceEn, "source.spm") => {
+                "baeab21ec00d0b490382b82499ef0348235c5a8e75de28aec8290adf62b007c4"
+            }
+            (TranslationModel::RomanceEn, "model.safetensors") => {
+                "4933c13d13c01bc2f59e36d3419a7c44b3696b345b658a2eef5d1f3d6195b6b4"
+            }
+            _ => {
+                unreachable!("sha256 requested for a file outside TRANSLATION_MODEL_FILES: {file}")
+            }
+        }
     }
 
     /// Sentence-initial target-language token this model requires, if any.
@@ -192,6 +262,111 @@ impl TranslationModel {
             TranslationModel::EsEn => 312,
             TranslationModel::EnPt => 465,
             TranslationModel::RomanceEn => 312,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn is_sha256_hex(s: &str) -> bool {
+        s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+    }
+
+    #[test]
+    fn test_model_size_sha256_valid() {
+        let sizes = [
+            ModelSize::Tiny,
+            ModelSize::Base,
+            ModelSize::Small,
+            ModelSize::Medium,
+        ];
+
+        for size in sizes {
+            let sha = size.sha256();
+            assert!(is_sha256_hex(sha), "Invalid SHA256 for {:?}: {}", size, sha);
+        }
+    }
+
+    #[test]
+    fn test_model_size_download_url_non_empty() {
+        let sizes = [
+            ModelSize::Tiny,
+            ModelSize::Base,
+            ModelSize::Small,
+            ModelSize::Medium,
+        ];
+
+        for size in sizes {
+            let url = size.download_url();
+            assert!(!url.is_empty(), "Empty download URL for {:?}", size);
+            assert!(
+                url.starts_with("https://"),
+                "Invalid URL scheme for {:?}",
+                size
+            );
+        }
+    }
+
+    #[test]
+    fn test_vad_model_sha256_valid() {
+        let sha = VadModel::Silero.sha256();
+        assert!(is_sha256_hex(sha), "Invalid SHA256 for Silero: {}", sha);
+    }
+
+    #[test]
+    fn test_vad_model_download_url_non_empty() {
+        let url = VadModel::Silero.download_url();
+        assert!(!url.is_empty(), "Empty download URL for Silero VAD");
+        assert!(
+            url.starts_with("https://"),
+            "Invalid URL scheme for Silero VAD"
+        );
+    }
+
+    #[test]
+    fn test_translation_model_sha256_valid() {
+        let models = [
+            TranslationModel::EnEs,
+            TranslationModel::EsEn,
+            TranslationModel::EnPt,
+            TranslationModel::RomanceEn,
+        ];
+
+        for model in models {
+            for file in TRANSLATION_MODEL_FILES {
+                let sha = model.sha256(file);
+                assert!(
+                    is_sha256_hex(sha),
+                    "Invalid SHA256 for {:?} file {}: {}",
+                    model,
+                    file,
+                    sha
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_translation_model_sha256_covers_all_files() {
+        let models = [
+            TranslationModel::EnEs,
+            TranslationModel::EsEn,
+            TranslationModel::EnPt,
+            TranslationModel::RomanceEn,
+        ];
+
+        for model in models {
+            for file in TRANSLATION_MODEL_FILES {
+                let sha = model.sha256(file);
+                assert!(
+                    !sha.is_empty(),
+                    "Empty SHA256 for {:?} file {}",
+                    model,
+                    file
+                );
+            }
         }
     }
 }
