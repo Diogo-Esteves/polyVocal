@@ -540,7 +540,6 @@ select:focus-visible {
 
 /* Icon-only header controls. Sized to the 44×44px minimum in DESIGN.md →
  * *Layout*, not to the icon. */
-.theme-toggle,
 .settings-toggle,
 .history-toggle {
   min-width: 44px;
@@ -750,10 +749,42 @@ select {
   margin: 0;
 }
 
-.model-active {
+.model-active,
+.model-ready {
   flex-shrink: 0;
   font-size: 0.85rem;
   color: var(--color-primary);
+}
+
+/* Settings rows below the Languages/Accuracy lists — "Microphone [Default
+ * ⌄]", "Appearance [Auto ⌄]" (`../design/DESIGN.md` → *Key Screens ·
+ * Settings*): a label and a select, spread to the row's full width. */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.settings-row label {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.settings-row select {
+  min-width: 10rem;
+}
+
+/* Section headings inside a sheet body (h2's uppercase label style, per
+ * `.sheet-body h2` below) get breathing room from whatever came before,
+ * except the very first one. */
+.sheet-body h2 {
+  margin-top: var(--space-6);
+}
+
+.sheet-body h2:first-child {
+  margin-top: 0;
 }
 
 .model-download,

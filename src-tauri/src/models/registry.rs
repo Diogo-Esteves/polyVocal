@@ -176,4 +176,22 @@ impl TranslationModel {
             _ => None,
         }
     }
+
+    /// Approximate on-disk size of this checkpoint, in decimal MB — Settings
+    /// shows this next to the language pair it belongs to, per
+    /// `../../design/DESIGN.md` principle 5 ("Languages, not files"), same
+    /// idea as `ModelSize::size_mb` for Whisper. Dominated entirely by
+    /// `model.safetensors` (the other `TRANSLATION_MODEL_FILES` are under
+    /// 1 MB combined); measured from each repo's HuggingFace
+    /// `Content-Length` at the pinned `revision()`, not computed at
+    /// runtime — not worth a network round trip just to report a number in
+    /// Settings.
+    pub fn size_mb(&self) -> u32 {
+        match self {
+            TranslationModel::EnEs => 312,
+            TranslationModel::EsEn => 312,
+            TranslationModel::EnPt => 465,
+            TranslationModel::RomanceEn => 312,
+        }
+    }
 }

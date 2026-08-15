@@ -37,6 +37,8 @@ pub fn run() {
             commands::audio::stop_recording,
             // Translation
             commands::translation::translate_text,
+            commands::translation::list_translation_models,
+            commands::translation::download_translation_model,
             // Storage
             commands::storage::list_sessions,
             commands::storage::get_session,
