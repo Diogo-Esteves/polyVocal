@@ -20,7 +20,7 @@
 
 PolyVocal is a local, privacy-first speech-to-text and translation app. It transcribes your speech entirely on-device — no cloud, no accounts, no audio ever leaving your machine — and translates the result on demand using local models.
 
-The name and logo draw on the playful image of someone singing into a hairbrush: expressive, immediate, uninhibited.
+The name and logo draw on the hairbrush people grab as a stand-in microphone — expressive, immediate, uninhibited.
 
 ---
 
