@@ -101,6 +101,16 @@ impl ModelManager {
         self.models_dir.join("translation").join(model.dir_name())
     }
 
+    /// Whether every file `ensure_translation_model` would fetch for `model`
+    /// is already on disk — a read-only check Settings uses to show
+    /// ready/download state without triggering a download.
+    pub fn is_translation_model_downloaded(&self, model: &TranslationModel) -> bool {
+        let dir = self.translation_model_dir(model);
+        TRANSLATION_MODEL_FILES
+            .iter()
+            .all(|file| dir.join(file).exists())
+    }
+
     /// Download all of a translation model's files, unless already present,
     /// returning the directory containing them. Each file is checked
     /// independently so an interrupted download only re-fetches what's
@@ -331,5 +341,55 @@ mod tests {
             std::fs::read(model_dir.join("vocab.json")).unwrap(),
             b"freshly downloaded"
         );
+    }
+
+    #[test]
+    fn test_is_translation_model_downloaded_false_when_dir_missing() {
+        let dir = temp_models_dir("polyvocal_test_translation_downloaded_missing");
+        let model_dir = dir
+            .join("translation")
+            .join(TranslationModel::EnEs.dir_name());
+        let _ = std::fs::remove_dir_all(&model_dir);
+
+        let manager = ModelManager::new(dir.clone());
+
+        assert!(!manager.is_translation_model_downloaded(&TranslationModel::EnEs));
+    }
+
+    #[test]
+    fn test_is_translation_model_downloaded_false_when_some_files_missing() {
+        let dir = temp_models_dir("polyvocal_test_translation_downloaded_partial");
+        let model_dir = dir
+            .join("translation")
+            .join(TranslationModel::EnEs.dir_name());
+        let _ = std::fs::remove_dir_all(&model_dir);
+        std::fs::create_dir_all(&model_dir).unwrap();
+        for file in TRANSLATION_MODEL_FILES
+            .iter()
+            .take(TRANSLATION_MODEL_FILES.len() - 1)
+        {
+            std::fs::write(model_dir.join(file), b"present").unwrap();
+        }
+
+        let manager = ModelManager::new(dir.clone());
+
+        assert!(!manager.is_translation_model_downloaded(&TranslationModel::EnEs));
+    }
+
+    #[test]
+    fn test_is_translation_model_downloaded_true_when_all_files_present() {
+        let dir = temp_models_dir("polyvocal_test_translation_downloaded_complete");
+        let model_dir = dir
+            .join("translation")
+            .join(TranslationModel::EnEs.dir_name());
+        let _ = std::fs::remove_dir_all(&model_dir);
+        std::fs::create_dir_all(&model_dir).unwrap();
+        for file in TRANSLATION_MODEL_FILES {
+            std::fs::write(model_dir.join(file), b"present").unwrap();
+        }
+
+        let manager = ModelManager::new(dir.clone());
+
+        assert!(manager.is_translation_model_downloaded(&TranslationModel::EnEs));
     }
 }
