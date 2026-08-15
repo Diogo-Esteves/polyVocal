@@ -1,6 +1,9 @@
 use crate::models::downloader::ReqwestDownloader;
+use crate::models::manager::ModelManager;
+use crate::models::registry::TranslationModel;
 use crate::storage::repository::SessionRepository;
 use crate::translation::engine::{detect_language, TranslationEngine};
+use serde::Serialize;
 use sqlx::SqlitePool;
 use std::future::Future;
 use std::path::PathBuf;
@@ -96,6 +99,80 @@ pub async fn translate_text(
         engine: TranslationEngine::new(models_dir(&app)?),
     };
     translate_session(&repository, &translator, &session_id, &target_lang).await
+}
+
+/// One row of the Settings "Languages" list — a language paired with
+/// English (the only pivot the MVP supports), not a raw OPUS-MT checkpoint.
+/// Per `../../design/DESIGN.md` principle 5 ("Languages, not files"),
+/// Settings never shows `opus-mt-romance-en` or a model directory name —
+/// only what the user actually picks (a language) and what they actually
+/// care about (size, and whether it's ready to use).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LanguagePairInfo {
+    /// ISO 639-1 code for the non-English side of the pair, e.g. `"pt"`.
+    pub language: String,
+    pub size_mb: u32,
+    pub downloaded: bool,
+}
+
+/// Which underlying OPUS-MT checkpoints back full two-way translation
+/// between `language` and English. Mirrors
+/// `translation::engine::resolve_pipeline`'s routing table, but grouped by
+/// language rather than by direction — Settings presents one row per
+/// language pair, not one per model file/direction.
+fn translation_models_for_language(language: &str) -> Option<Vec<TranslationModel>> {
+    match language {
+        "pt" => Some(vec![TranslationModel::EnPt, TranslationModel::RomanceEn]),
+        "es" => Some(vec![TranslationModel::EnEs, TranslationModel::EsEn]),
+        _ => None,
+    }
+}
+
+/// Builds the Settings "Languages" list from disk state — split out from
+/// the `#[tauri::command]` below so it's testable without an `AppHandle`,
+/// same pattern as `translate_session` above.
+fn language_pairs(manager: &ModelManager) -> Vec<LanguagePairInfo> {
+    crate::translation::SUPPORTED_LANGUAGES
+        .iter()
+        .filter(|(code, _)| *code != "en")
+        .filter_map(|(code, _)| {
+            let models = translation_models_for_language(code)?;
+            let size_mb = models.iter().map(|m| m.size_mb()).sum();
+            let downloaded = models
+                .iter()
+                .all(|m| manager.is_translation_model_downloaded(m));
+            Some(LanguagePairInfo {
+                language: code.to_string(),
+                size_mb,
+                downloaded,
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn list_translation_models(app: AppHandle) -> Result<Vec<LanguagePairInfo>, String> {
+    let manager = ModelManager::new(models_dir(&app)?);
+    Ok(language_pairs(&manager))
+}
+
+/// Downloads every checkpoint `language`'s pair with English needs. Not
+/// currently emitting granular progress (see #75 — the existing
+/// `ModelDownloader`/`ReqwestDownloader` path has none to surface; the
+/// frontend shows an indeterminate "Downloading…" state instead, matching
+/// the pre-existing Whisper model download UI).
+#[tauri::command]
+pub async fn download_translation_model(app: AppHandle, language: String) -> Result<(), String> {
+    let manager = ModelManager::new(models_dir(&app)?);
+    let models = translation_models_for_language(&language)
+        .ok_or_else(|| format!("unsupported language: {language}"))?;
+    for model in models {
+        manager
+            .ensure_translation_model(&model, &ReqwestDownloader)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -315,5 +392,88 @@ mod tests {
 
         assert!(!translated.is_empty());
         assert_ne!(translated, session.transcript);
+    }
+
+    #[test]
+    fn test_translation_models_for_language_covers_both_supported_non_english_pairs() {
+        assert_eq!(
+            translation_models_for_language("pt"),
+            Some(vec![TranslationModel::EnPt, TranslationModel::RomanceEn])
+        );
+        assert_eq!(
+            translation_models_for_language("es"),
+            Some(vec![TranslationModel::EnEs, TranslationModel::EsEn])
+        );
+    }
+
+    #[test]
+    fn test_translation_models_for_language_rejects_english_and_unknown_codes() {
+        assert_eq!(translation_models_for_language("en"), None);
+        assert_eq!(translation_models_for_language("fr"), None);
+    }
+
+    fn temp_models_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_language_pairs_excludes_english_and_reports_not_downloaded_by_default() {
+        let dir = temp_models_dir("polyvocal_test_language_pairs_fresh");
+        let manager = ModelManager::new(dir);
+
+        let pairs = language_pairs(&manager);
+
+        let languages: Vec<&str> = pairs.iter().map(|p| p.language.as_str()).collect();
+        assert_eq!(languages, vec!["pt", "es"]);
+        assert!(pairs.iter().all(|p| !p.downloaded));
+        assert_eq!(
+            pairs.iter().find(|p| p.language == "pt").unwrap().size_mb,
+            TranslationModel::EnPt.size_mb() + TranslationModel::RomanceEn.size_mb()
+        );
+    }
+
+    #[test]
+    fn test_language_pairs_reports_downloaded_only_once_every_checkpoint_file_is_present() {
+        let dir = temp_models_dir("polyvocal_test_language_pairs_downloaded");
+        let manager = ModelManager::new(dir);
+
+        let en_es_dir = manager.translation_model_dir(&TranslationModel::EnEs);
+        std::fs::create_dir_all(&en_es_dir).unwrap();
+        for file in crate::models::registry::TRANSLATION_MODEL_FILES {
+            std::fs::write(en_es_dir.join(file), b"present").unwrap();
+        }
+        // Only one of the two checkpoints ES needs — still not "ready".
+        let pairs = language_pairs(&manager);
+        assert!(
+            !pairs
+                .iter()
+                .find(|p| p.language == "es")
+                .unwrap()
+                .downloaded
+        );
+
+        let es_en_dir = manager.translation_model_dir(&TranslationModel::EsEn);
+        std::fs::create_dir_all(&es_en_dir).unwrap();
+        for file in crate::models::registry::TRANSLATION_MODEL_FILES {
+            std::fs::write(es_en_dir.join(file), b"present").unwrap();
+        }
+        let pairs = language_pairs(&manager);
+        assert!(
+            pairs
+                .iter()
+                .find(|p| p.language == "es")
+                .unwrap()
+                .downloaded
+        );
+        assert!(
+            !pairs
+                .iter()
+                .find(|p| p.language == "pt")
+                .unwrap()
+                .downloaded
+        );
     }
 }
