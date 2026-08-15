@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo/logo.png" alt="PolyVocal" width="120" />
+<img src="assets/bg/background.png" alt="PolyVocal" width="100%" />
 
 # PolyVocal
 
