@@ -37,14 +37,6 @@ impl ThemeMode {
         }
     }
 
-    fn next(self) -> Self {
-        match self {
-            ThemeMode::Auto => ThemeMode::Light,
-            ThemeMode::Light => ThemeMode::Dark,
-            ThemeMode::Dark => ThemeMode::Auto,
-        }
-    }
-
     fn label(self) -> &'static str {
         match self {
             ThemeMode::Auto => "Match system",
@@ -124,45 +116,6 @@ mod icons {
     }
 
     #[component]
-    pub fn Sun() -> impl IntoView {
-        view! {
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="4"/>
-                <path d="M12 2v2"/>
-                <path d="M12 20v2"/>
-                <path d="m4.93 4.93 1.41 1.41"/>
-                <path d="m17.66 17.66 1.41 1.41"/>
-                <path d="M2 12h2"/>
-                <path d="M20 12h2"/>
-                <path d="m6.34 17.66-1.41 1.41"/>
-                <path d="m19.07 4.93-1.41 1.41"/>
-            </svg>
-        }
-    }
-
-    #[component]
-    pub fn Moon() -> impl IntoView {
-        view! {
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/>
-            </svg>
-        }
-    }
-
-    #[component]
-    pub fn SunMoon() -> impl IntoView {
-        view! {
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 2v2"/>
-                <path d="M14.837 16.385a6 6 0 1 1-7.223-7.222c.624-.147.97.66.715 1.248a4 4 0 0 0 5.26 5.259c.589-.255 1.396.09 1.248.715"/>
-                <path d="M16 12a4 4 0 0 0-4-4"/>
-                <path d="m19 5-1.256 1.256"/>
-                <path d="M20 12h2"/>
-            </svg>
-        }
-    }
-
-    #[component]
     pub fn History() -> impl IntoView {
         view! {
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -193,7 +146,7 @@ mod icons {
         }
     }
 }
-use icons::{ArrowLeft, History, Languages, Moon, Settings, Sun, SunMoon, TriangleAlert};
+use icons::{ArrowLeft, History, Languages, Settings, TriangleAlert};
 
 /// The PolyVocal mark — the hairbrush, rebuilt as inline SVG so it themes,
 /// stays crisp at any size, and exposes each strand as its own path. Geometry
@@ -400,12 +353,20 @@ enum ModelSize {
 }
 
 impl ModelSize {
+    /// "Fast/Balanced/Best" rather than "tiny/base/small/medium" —
+    /// `../../design/DESIGN.md` principle 5 ("Languages, not files") reads
+    /// the same way for Whisper sizes: "tiny/base/small/medium" is
+    /// vocabulary for people who already know what a Whisper model is.
+    /// `Base` is a real, selectable backend size but sits between Fast and
+    /// Balanced with no room in a three-way picker, so it's the one size
+    /// Settings doesn't surface — a judgment call, not a backend removal
+    /// (see `MODEL_PICKER_SIZES` below).
     fn label(self) -> &'static str {
         match self {
-            ModelSize::Tiny => "Tiny",
+            ModelSize::Tiny => "Fast",
             ModelSize::Base => "Base",
-            ModelSize::Small => "Small",
-            ModelSize::Medium => "Medium",
+            ModelSize::Small => "Balanced",
+            ModelSize::Medium => "Best",
         }
     }
 
@@ -419,6 +380,10 @@ impl ModelSize {
         }
     }
 }
+
+/// The three sizes Settings' "Accuracy" picker offers — see
+/// `ModelSize::label`'s doc comment on why `Base` is excluded.
+const MODEL_PICKER_SIZES: [ModelSize; 3] = [ModelSize::Tiny, ModelSize::Small, ModelSize::Medium];
 
 /// Mirrors `models::registry::ModelInfo` — a command *return value*,
 /// serialized as-is by the backend's own (unrenamed) `Serialize` impl, so
@@ -441,6 +406,31 @@ struct DownloadModelArgs {
 #[serde(rename_all = "camelCase")]
 struct SetActiveModelArgs {
     size: ModelSize,
+}
+
+/// Mirrors `commands::translation::LanguagePairInfo` — a command *return
+/// value*, serialized as-is by the backend's own (unrenamed) `Serialize`
+/// impl, same reasoning as `ModelInfo` above.
+#[derive(Deserialize, Clone)]
+struct LanguagePairInfo {
+    language: String,
+    size_mb: u32,
+    downloaded: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadTranslationModelArgs {
+    language: String,
+}
+
+/// Mirrors `audio::InputDevice` — a command return value, same reasoning as
+/// `ModelInfo` above.
+#[derive(Deserialize, Clone)]
+struct InputDevice {
+    id: String,
+    name: String,
+    is_default: bool,
 }
 
 /// Every element type a keyboard user can land on, for the sheet's focus
@@ -692,7 +682,6 @@ fn SessionList(
 fn App() -> impl IntoView {
     let theme_mode = RwSignal::new(stored_theme_mode());
     Effect::new(move |_| apply_theme_mode(theme_mode.get()));
-    let cycle_theme = move |_| theme_mode.update(|mode| *mode = mode.next());
 
     let recording = RwSignal::new(false);
     let busy = RwSignal::new(false);
@@ -740,6 +729,15 @@ fn App() -> impl IntoView {
     let models = RwSignal::new(Vec::<ModelInfo>::new());
     let models_loading = RwSignal::new(false);
     let downloading_size = RwSignal::new(None::<ModelSize>);
+    let translation_models = RwSignal::new(Vec::<LanguagePairInfo>::new());
+    let translation_models_loading = RwSignal::new(false);
+    let downloading_language = RwSignal::new(None::<String>);
+    let input_devices = RwSignal::new(Vec::<InputDevice>::new());
+    let devices_loading = RwSignal::new(false);
+    // `None` means "let the backend pick its own default" (the microphone
+    // row's "Default" option) — same convention `StartRecordingArgs`
+    // already used before this picker existed.
+    let selected_device_id = RwSignal::new(None::<String>);
     let sessions = RwSignal::new(Vec::<Session>::new());
     let sessions_loading = RwSignal::new(true);
     let pending_delete_id = RwSignal::new(None::<String>);
@@ -847,7 +845,9 @@ fn App() -> impl IntoView {
                 detected_language.set(None);
                 translated_text.set(None);
                 session_id.set(None);
-                let args = StartRecordingArgs { device_id: None };
+                let args = StartRecordingArgs {
+                    device_id: selected_device_id.get_untracked(),
+                };
                 match tauri_sys::core::invoke_result::<(), String>("start_recording", args).await {
                     Ok(()) => recording.set(true),
                     Err(e) => error_message.set(Some(e)),
@@ -892,6 +892,32 @@ fn App() -> impl IntoView {
                     Err(e) => error_message.set(Some(e)),
                 }
                 models_loading.set(false);
+            });
+            translation_models_loading.set(true);
+            spawn_local(async move {
+                match tauri_sys::core::invoke_result::<Vec<LanguagePairInfo>, String>(
+                    "list_translation_models",
+                    (),
+                )
+                .await
+                {
+                    Ok(list) => translation_models.set(list),
+                    Err(e) => error_message.set(Some(e)),
+                }
+                translation_models_loading.set(false);
+            });
+            devices_loading.set(true);
+            spawn_local(async move {
+                match tauri_sys::core::invoke_result::<Vec<InputDevice>, String>(
+                    "list_input_devices",
+                    (),
+                )
+                .await
+                {
+                    Ok(list) => input_devices.set(list),
+                    Err(e) => error_message.set(Some(e)),
+                }
+                devices_loading.set(false);
             });
         }
     };
@@ -948,18 +974,6 @@ fn App() -> impl IntoView {
                     >
                         <Settings/>
                     </button>
-                    <button
-                        class="theme-toggle"
-                        on:click=cycle_theme
-                        title=move || format!("Theme: {} (click to change)", theme_mode.get().label())
-                        aria-label=move || format!("Theme: {}. Click to change.", theme_mode.get().label())
-                    >
-                        {move || match theme_mode.get() {
-                            ThemeMode::Auto => view! { <SunMoon/> }.into_any(),
-                            ThemeMode::Light => view! { <Sun/> }.into_any(),
-                            ThemeMode::Dark => view! { <Moon/> }.into_any(),
-                        }}
-                    </button>
                 </div>
             </header>
 
@@ -971,73 +985,172 @@ fn App() -> impl IntoView {
                 invoker=settings_toggle_ref
             >
                 {move || {
-                        if models_loading.get() {
-                            view! { <p class="sessions-empty">"Loading…"</p> }.into_any()
-                        } else {
-                            view! {
-                                <ul class="model-list">
-                                    {models.get().into_iter().map(|model| {
-                                        let size = model.size;
-                                        view! {
-                                            <li class="model-item">
-                                                <div class="model-body">
-                                                    <p class="model-name">
-                                                        {size.label()}" · "{size.size_mb()}" MB"
-                                                    </p>
-                                                </div>
-                                                {if model.is_active {
-                                                    view! { <span class="model-active">"Active"</span> }.into_any()
-                                                } else if model.downloaded {
-                                                    view! {
-                                                        <button
-                                                            class="model-activate"
-                                                            disabled=move || downloading_size.get().is_some()
-                                                            on:click=move |_| {
-                                                                spawn_local(async move {
-                                                                    let args = SetActiveModelArgs { size };
-                                                                    if let Err(e) = tauri_sys::core::invoke_result::<(), String>("set_active_model", args).await {
-                                                                        error_message.set(Some(e));
-                                                                    }
-                                                                    match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ()).await {
-                                                                        Ok(list) => models.set(list),
-                                                                        Err(e) => error_message.set(Some(e)),
-                                                                    }
-                                                                });
-                                                            }
-                                                        >
-                                                            "Activate"
-                                                        </button>
-                                                    }.into_any()
-                                                } else {
-                                                    view! {
-                                                        <button
-                                                            class="model-download"
-                                                            disabled=move || downloading_size.get().is_some()
-                                                            on:click=move |_| {
-                                                                downloading_size.set(Some(size));
-                                                                spawn_local(async move {
-                                                                    let args = DownloadModelArgs { size };
-                                                                    if let Err(e) = tauri_sys::core::invoke_result::<(), String>("download_model", args).await {
-                                                                        error_message.set(Some(e));
-                                                                    }
-                                                                    match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ()).await {
-                                                                        Ok(list) => models.set(list),
-                                                                        Err(e) => error_message.set(Some(e)),
-                                                                    }
-                                                                    downloading_size.set(None);
-                                                                });
-                                                            }
-                                                        >
-                                                            {move || if downloading_size.get() == Some(size) { "Downloading…" } else { "Download" }}
-                                                        </button>
-                                                    }.into_any()
-                                                }}
-                                            </li>
-                                        }
+                    if models_loading.get() || translation_models_loading.get() || devices_loading.get() {
+                        view! { <p class="sessions-empty">"Loading…"</p> }.into_any()
+                    } else {
+                        view! {
+                            <h2><Languages/> <span>"Languages"</span></h2>
+                            // Language pairs, not files (`../../design/DESIGN.md`
+                            // principle 5) — each row is "Portuguese ↔ English",
+                            // never the underlying `opus-mt-*` checkpoint names
+                            // `translation_models_for_language` maps it to on the
+                            // backend. No "real" progress percentage exists for
+                            // these multi-hundred-MB fetches (the downloader
+                            // streams to disk without reporting bytes read), so
+                            // — same judgment call as the Whisper list below —
+                            // this shows an indeterminate "Downloading…" state
+                            // rather than a percentage.
+                            <ul class="model-list">
+                                {translation_models.get().into_iter().map(|pair| {
+                                    let language_for_click = pair.language.clone();
+                                    let language_for_label = pair.language.clone();
+                                    let pair_label = language_label(&pair.language);
+                                    view! {
+                                        <li class="model-item">
+                                            <div class="model-body">
+                                                <p class="model-name">
+                                                    {pair_label}" ↔ English · "{pair.size_mb}" MB"
+                                                </p>
+                                            </div>
+                                            {if pair.downloaded {
+                                                view! { <span class="model-ready">"Ready"</span> }.into_any()
+                                            } else {
+                                                view! {
+                                                    <button
+                                                        class="model-download"
+                                                        disabled=move || downloading_language.get().is_some()
+                                                        on:click=move |_| {
+                                                            let language = language_for_click.clone();
+                                                            downloading_language.set(Some(language.clone()));
+                                                            spawn_local(async move {
+                                                                let args = DownloadTranslationModelArgs { language };
+                                                                if let Err(e) = tauri_sys::core::invoke_result::<(), String>("download_translation_model", args).await {
+                                                                    error_message.set(Some(e));
+                                                                }
+                                                                match tauri_sys::core::invoke_result::<Vec<LanguagePairInfo>, String>("list_translation_models", ()).await {
+                                                                    Ok(list) => translation_models.set(list),
+                                                                    Err(e) => error_message.set(Some(e)),
+                                                                }
+                                                                downloading_language.set(None);
+                                                            });
+                                                        }
+                                                    >
+                                                        {move || if downloading_language.get().as_deref() == Some(language_for_label.as_str()) { "Downloading…" } else { "Download" }}
+                                                    </button>
+                                                }.into_any()
+                                            }}
+                                        </li>
+                                    }
+                                }).collect_view()}
+                            </ul>
+
+                            <h2>"Accuracy"</h2>
+                            <ul class="model-list">
+                                {models.get().into_iter().filter(|m| MODEL_PICKER_SIZES.contains(&m.size)).map(|model| {
+                                    let size = model.size;
+                                    view! {
+                                        <li class="model-item">
+                                            <div class="model-body">
+                                                <p class="model-name">
+                                                    {size.label()}" · "{size.size_mb()}" MB"
+                                                </p>
+                                            </div>
+                                            {if model.is_active {
+                                                view! { <span class="model-active">"Active"</span> }.into_any()
+                                            } else if model.downloaded {
+                                                view! {
+                                                    <button
+                                                        class="model-activate"
+                                                        disabled=move || downloading_size.get().is_some()
+                                                        on:click=move |_| {
+                                                            spawn_local(async move {
+                                                                let args = SetActiveModelArgs { size };
+                                                                if let Err(e) = tauri_sys::core::invoke_result::<(), String>("set_active_model", args).await {
+                                                                    error_message.set(Some(e));
+                                                                }
+                                                                match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ()).await {
+                                                                    Ok(list) => models.set(list),
+                                                                    Err(e) => error_message.set(Some(e)),
+                                                                }
+                                                            });
+                                                        }
+                                                    >
+                                                        "Activate"
+                                                    </button>
+                                                }.into_any()
+                                            } else {
+                                                view! {
+                                                    <button
+                                                        class="model-download"
+                                                        disabled=move || downloading_size.get().is_some()
+                                                        on:click=move |_| {
+                                                            downloading_size.set(Some(size));
+                                                            spawn_local(async move {
+                                                                let args = DownloadModelArgs { size };
+                                                                if let Err(e) = tauri_sys::core::invoke_result::<(), String>("download_model", args).await {
+                                                                    error_message.set(Some(e));
+                                                                }
+                                                                match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ()).await {
+                                                                    Ok(list) => models.set(list),
+                                                                    Err(e) => error_message.set(Some(e)),
+                                                                }
+                                                                downloading_size.set(None);
+                                                            });
+                                                        }
+                                                    >
+                                                        {move || if downloading_size.get() == Some(size) { "Downloading…" } else { "Download" }}
+                                                    </button>
+                                                }.into_any()
+                                            }}
+                                        </li>
+                                    }
+                                }).collect_view()}
+                            </ul>
+
+                            <div class="settings-row">
+                                <label for="mic-select">"Microphone"</label>
+                                <select
+                                    id="mic-select"
+                                    aria-label="Microphone"
+                                    prop:value=move || selected_device_id.get().unwrap_or_default()
+                                    on:change=move |ev| {
+                                        let value = event_target_value(&ev);
+                                        selected_device_id.set(if value.is_empty() { None } else { Some(value) });
+                                    }
+                                >
+                                    <option value="">"Default"</option>
+                                    {input_devices.get().into_iter().map(|device| {
+                                        let label = if device.is_default {
+                                            format!("{} (default)", device.name)
+                                        } else {
+                                            device.name
+                                        };
+                                        view! { <option value=device.id>{label}</option> }
                                     }).collect_view()}
-                                </ul>
-                            }.into_any()
-                        }
+                                </select>
+                            </div>
+
+                            <div class="settings-row">
+                                <label for="appearance-select">"Appearance"</label>
+                                <select
+                                    id="appearance-select"
+                                    aria-label="Appearance"
+                                    prop:value=move || match theme_mode.get() {
+                                        ThemeMode::Auto => "auto",
+                                        ThemeMode::Light => "light",
+                                        ThemeMode::Dark => "dark",
+                                    }
+                                    on:change=move |ev| {
+                                        theme_mode.set(ThemeMode::from_storage_value(&event_target_value(&ev)));
+                                    }
+                                >
+                                    <option value="auto">{ThemeMode::Auto.label()}</option>
+                                    <option value="light">{ThemeMode::Light.label()}</option>
+                                    <option value="dark">{ThemeMode::Dark.label()}</option>
+                                </select>
+                            </div>
+                        }.into_any()
+                    }
                 }}
             </Sheet>
 
