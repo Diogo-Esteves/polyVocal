@@ -38,8 +38,8 @@
       `tauri-plugin-dialog`/`tauri-plugin-fs`; TXT writes the transcript +
       translation, SRT writes the per-segment timestamps persisted in the
       `segments` table (`SessionRepository::segments`) as `HH:MM:SS,mmm`
-      cues. Both are triggered from "Export TXT"/"Export SRT" buttons per
-      session in Recent Sessions. DOCX not started — see
+      cues. Both are triggered from "Export TXT"/"Export SRT" actions in a
+      session's `⋯` menu (session detail view, #74). DOCX not started — see
       `src-tauri/src/commands/storage.rs`)*
 - [ ] API / integrations
 

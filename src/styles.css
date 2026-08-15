@@ -280,6 +280,7 @@ body {
 .sheet-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   flex-shrink: 0;
   padding-top: var(--space-6);
   padding-bottom: var(--space-4);
@@ -687,15 +688,6 @@ select:focus-visible {
   font-size: var(--text-lg);
 }
 
-/* The translate stopgap sits under the transcript and only exists once there
- * is a session to translate. Capped so it can never become the screen — it
- * moves onto the session detail view in #74. */
-.translate {
-  flex: 0 0 auto;
-  max-height: 40vh;
-  overflow-y: auto;
-}
-
 .translate-status {
   margin: 0.5rem 0 0;
   color: var(--color-text-muted);
@@ -742,17 +734,11 @@ select {
   gap: 0.5rem;
 }
 
-.model-item,
-.session-item {
+.model-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  /* Export TXT / Export SRT / Delete are wider than a narrow window can give
-     them next to the preview; let them drop to their own row instead of
-     squeezing the transcript preview down to one character per line. The
-     actions move into the session's ⋯ menu in #74. */
-  flex-wrap: wrap;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 0.75rem;
@@ -806,13 +792,25 @@ select {
   flex-shrink: 0;
 }
 
-.session-body {
-  flex: 1 1 12rem;
-  min-width: 0;
+/* The whole card is the tap target (`../design/DESIGN.md` → *Key Screens ·
+ * History*) that opens the session detail sheet — export and delete moved
+ * off the row into that sheet's `⋯` menu in #74, so there's nothing left
+ * here but a left-aligned block button. */
+.session-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  gap: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  background: var(--color-surface);
+  text-align: left;
 }
 
 .session-preview {
-  margin: 0 0 0.25rem;
+  margin: 0;
   overflow-wrap: anywhere;
 }
 
@@ -820,21 +818,6 @@ select {
   margin: 0;
   color: var(--color-text-muted);
   font-size: 0.85rem;
-}
-
-.session-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-shrink: 0;
-  /* Three buttons (Export TXT / Export SRT / Delete) can outgrow a narrow
-     window; wrap them to a second line instead of overflowing the item. */
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.session-export,
-.session-delete {
-  flex-shrink: 0;
 }
 
 /* Expand/collapse affordance under a capped session list — quieter and
@@ -845,8 +828,120 @@ select {
   font-size: 0.85rem;
 }
 
-.session-delete.is-confirming {
+/* The session detail sheet (`../design/DESIGN.md` → *Key Screens · Session*)
+ * — opened after stopping and from a History card, so it can be nested over
+ * an already-open History sheet. A higher z-index than `.sheet`/
+ * `.sheet-backdrop` (21/20) is what makes that stacking correct: its own
+ * backdrop still sits above History's panel, and its panel sits above that. */
+.session-detail-sheet {
+  z-index: 23;
+}
+
+.session-detail-sheet-backdrop {
+  z-index: 22;
+}
+
+.session-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.session-detail-meta {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.session-detail-text {
+  min-height: 4rem;
+  font-size: var(--text-xl);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* `[ Original | English ⌄ ]` — `../design/DESIGN.md` → *Key Screens ·
+ * Session*: one tap translates the session in place. The right segment is a
+ * plain `<select>` (matching `.language-target` on the record screen) rather
+ * than a custom listbox — its own native chevron already reads as "English
+ * ⌄", and `on:mousedown`/`on:change` in main.rs cover both "switch to an
+ * already-cached translation" and "pick a new target language" with the one
+ * control. */
+.translate-toggle {
+  display: flex;
+  align-self: flex-start;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.toggle-segment {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.5rem 1rem;
+}
+
+.toggle-segment.is-active {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+}
+
+/* The `⋯` menu (`../design/DESIGN.md` → *Key Screens · Session*: "Export and
+ * delete move inside the opened session, into the `⋯` menu") — a small
+ * dropdown anchored under the header's menu toggle. */
+.session-menu-wrap {
+  position: relative;
+}
+
+.session-menu-toggle {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.5rem;
+  justify-content: center;
+  background: transparent;
+}
+
+.session-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 10rem;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-elevated);
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fast) ease,
+    visibility 0s var(--motion-fast);
+}
+
+.session-menu.is-open {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity var(--motion-fast) ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-menu {
+    transition: none;
+  }
+}
+
+.session-menu-item {
+  justify-content: flex-start;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+.session-menu-delete.is-confirming {
   background: var(--color-danger-bg);
-  border-color: var(--color-danger);
   color: var(--color-danger);
 }

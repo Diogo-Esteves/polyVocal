@@ -137,6 +137,17 @@ mod icons {
     }
 
     #[component]
+    pub fn MoreHorizontal() -> impl IntoView {
+        view! {
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="1"/>
+                <circle cx="19" cy="12" r="1"/>
+                <circle cx="5" cy="12" r="1"/>
+            </svg>
+        }
+    }
+
+    #[component]
     pub fn Settings() -> impl IntoView {
         view! {
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -146,7 +157,7 @@ mod icons {
         }
     }
 }
-use icons::{ArrowLeft, History, Languages, Settings, TriangleAlert};
+use icons::{ArrowLeft, History, Languages, MoreHorizontal, Settings, TriangleAlert};
 
 /// The PolyVocal mark — the hairbrush, rebuilt as inline SVG so it themes,
 /// stays crisp at any size, and exposes each strand as its own path. Geometry
@@ -242,10 +253,54 @@ impl RecordState {
     }
 }
 
+/// Which text the session detail sheet's `[ Original | English ⌄ ]` toggle
+/// (`../design/DESIGN.md` → *Key Screens · Session*) is currently showing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionView {
+    Original,
+    Translated,
+}
+
 /// `M:SS` for the recording label. Deliberately not zero-padded on the
 /// minutes — the label reads "0:05 · Tap to stop", not "00:05".
 fn format_elapsed(seconds: u32) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+/// "Aug 14, 19:11" for the session detail header (`../design/DESIGN.md` →
+/// *Key Screens · Session*). `created_at` is an RFC 3339 UTC string (backend
+/// uses `chrono::Utc::now().to_rfc3339()`); `js_sys::Date` parses that
+/// directly and its plain (non-UTC) getters convert to the OS local time
+/// zone for free — a timestamp is more useful read in the time the user
+/// actually experienced it than in UTC.
+fn format_session_datetime(created_at: &str) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(created_at));
+    if date.get_time().is_nan() {
+        return created_at.to_string();
+    }
+    let month = date.get_month() as usize;
+    let Some(month_name) = MONTHS.get(month) else {
+        return created_at.to_string();
+    };
+    let day = date.get_date();
+    let hours = date.get_hours();
+    let minutes = date.get_minutes();
+    format!("{month_name} {day}, {hours:02}:{minutes:02}")
+}
+
+/// "5s" for a short session, "1:05" (reusing `format_elapsed`) once it runs
+/// past a minute — the session detail meta line's duration, per the "5s" in
+/// `../design/DESIGN.md` → *Key Screens · Session*.
+fn format_duration_label(duration_ms: i64) -> String {
+    let secs = (duration_ms.max(0) / 1000) as u32;
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format_elapsed(secs)
+    }
 }
 
 /// Mirrors the `transcript:segment` event payload emitted by the Rust
@@ -288,6 +343,7 @@ struct TranslateArgs<'a> {
 struct Session {
     id: String,
     created_at: String,
+    duration_ms: i64,
     language: Option<String>,
     transcript: String,
     translation: Option<String>,
@@ -299,6 +355,12 @@ struct Session {
 struct ListSessionsArgs {
     limit: Option<i64>,
     offset: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GetSessionArgs<'a> {
+    id: &'a str,
 }
 
 #[derive(Serialize)]
@@ -465,13 +527,22 @@ fn focusable_elements(container: &web_sys::HtmlDivElement) -> Vec<web_sys::HtmlE
 /// focus moves in on open, is trapped by Tab/Shift+Tab while open, and
 /// returns to `invoker` (the control that opened it) on close — via
 /// Escape, the backdrop, or the in-sheet back control.
+///
+/// `title` and `invoker` are reactive (`Signal`, not a plain value) so a
+/// sheet whose header text or opening control depends on which session was
+/// tapped — the session detail sheet added in #74 — can still fit this same
+/// component: Settings and History just wrap a constant in `Signal::derive`.
+/// `header_extra` is a slot rendered after the back button, for the session
+/// detail sheet's `⋯` menu; Settings and History pass an empty closure since
+/// there's nothing there for either of them.
 #[component]
 fn Sheet(
     open: Signal<bool>,
     on_close: Callback<()>,
-    title: &'static str,
+    title: Signal<String>,
     variant: &'static str,
-    invoker: NodeRef<leptos::html::Button>,
+    invoker: Signal<Option<web_sys::HtmlElement>>,
+    header_extra: ChildrenFn,
     children: ChildrenFn,
 ) -> impl IntoView {
     let panel_ref = NodeRef::<leptos::html::Div>::new();
@@ -479,7 +550,9 @@ fn Sheet(
 
     // Fires only on the open/close edges (via the `prev` accumulator), not
     // on every reactive re-run, so it doesn't fight the user's own focus
-    // once the sheet has settled open.
+    // once the sheet has settled open. `invoker` is read untracked — its
+    // value can change while the sheet stays open (a different session
+    // card next time) without that alone re-running this effect.
     Effect::new(move |prev: Option<bool>| {
         let now_open = open.get();
         if now_open && prev != Some(true) {
@@ -493,7 +566,7 @@ fn Sheet(
                 }
             });
         } else if !now_open && prev == Some(true) {
-            if let Some(invoker) = invoker.get() {
+            if let Some(invoker) = invoker.get_untracked() {
                 let _ = invoker.focus();
             }
         }
@@ -534,15 +607,16 @@ fn Sheet(
             node_ref=panel_ref
             role="dialog"
             aria-modal="true"
-            aria-label=title
+            aria-label=move || title.get()
             aria-hidden=move || (!open.get()).to_string()
             on:keydown=on_keydown
         >
             <div class="sheet-header">
                 <button class="sheet-back" node_ref=back_ref on:click=move |_| on_close.run(())>
                     <ArrowLeft/>
-                    <span>{title}</span>
+                    <span>{move || title.get()}</span>
                 </button>
+                {header_extra()}
             </div>
             <div class="sheet-body">{children()}</div>
         </div>
@@ -553,13 +627,17 @@ fn Sheet(
 /// and the persistent History rail (>= 900px, `../design/DESIGN.md` →
 /// *Layout*) rather than duplicated — the two are the same content in two
 /// different shells, never two designs to keep in sync.
+///
+/// The whole card is the tap target (`../design/DESIGN.md` → *Key Screens ·
+/// History*: "Whole card is the tap target") — export and delete moved into
+/// the opened session's `⋯` menu in #74, so a card has nothing left to do on
+/// tap except open that session's detail sheet via `on_open`.
 #[component]
 fn SessionList(
     sessions: RwSignal<Vec<Session>>,
     sessions_loading: RwSignal<bool>,
     sessions_expanded: RwSignal<bool>,
-    pending_delete_id: RwSignal<Option<String>>,
-    error_message: RwSignal<Option<String>>,
+    on_open: Callback<(String, web_sys::HtmlElement)>,
 ) -> impl IntoView {
     view! {
         {move || {
@@ -579,11 +657,6 @@ fn SessionList(
                     <ul class="session-list">
                         {visible.into_iter().map(|session| {
                             let id = session.id.clone();
-                            let delete_id = id.clone();
-                            let confirm_class_id = id.clone();
-                            let label_id = id.clone();
-                            let export_id = id.clone();
-                            let export_srt_id = id.clone();
                             let preview: String = if session.transcript.chars().count() > 80 {
                                 let truncated: String = session.transcript.chars().take(80).collect();
                                 format!("{truncated}…")
@@ -600,62 +673,17 @@ fn SessionList(
                             };
                             view! {
                                 <li class="session-item">
-                                    <div class="session-body">
+                                    <button
+                                        class="session-card"
+                                        on:click=move |ev| {
+                                            if let Some(target) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok()) {
+                                                on_open.run((id.clone(), target));
+                                            }
+                                        }
+                                    >
                                         <p class="session-preview">{preview}</p>
                                         <p class="session-meta">{language_label}" · "{created_at}{translation_note}</p>
-                                    </div>
-                                    <div class="session-actions">
-                                        <button
-                                            class="session-export"
-                                            on:click=move |_| {
-                                                let id_to_export = export_id.clone();
-                                                spawn_local(async move {
-                                                    let args = ExportSessionTxtArgs { id: &id_to_export };
-                                                    match tauri_sys::core::invoke_result::<Option<String>, String>("export_session_txt", args).await {
-                                                        Ok(_) => error_message.set(None),
-                                                        Err(e) => error_message.set(Some(e)),
-                                                    }
-                                                });
-                                            }
-                                        >
-                                            "Export TXT"
-                                        </button>
-                                        <button
-                                            class="session-export"
-                                            on:click=move |_| {
-                                                let id_to_export = export_srt_id.clone();
-                                                spawn_local(async move {
-                                                    let args = ExportSessionSrtArgs { id: &id_to_export };
-                                                    match tauri_sys::core::invoke_result::<Option<String>, String>("export_session_srt", args).await {
-                                                        Ok(_) => error_message.set(None),
-                                                        Err(e) => error_message.set(Some(e)),
-                                                    }
-                                                });
-                                            }
-                                        >
-                                            "Export SRT"
-                                        </button>
-                                        <button
-                                            class="session-delete"
-                                            class:is-confirming=move || pending_delete_id.get().as_deref() == Some(confirm_class_id.as_str())
-                                            on:click=move |_| {
-                                                if pending_delete_id.get_untracked().as_deref() == Some(delete_id.as_str()) {
-                                                    let id_to_delete = delete_id.clone();
-                                                    pending_delete_id.set(None);
-                                                    spawn_local(async move {
-                                                        let args = DeleteSessionArgs { id: &id_to_delete };
-                                                        if tauri_sys::core::invoke_result::<(), String>("delete_session", args).await.is_ok() {
-                                                            sessions.update(|list| list.retain(|s| s.id != id_to_delete));
-                                                        }
-                                                    });
-                                                } else {
-                                                    pending_delete_id.set(Some(delete_id.clone()));
-                                                }
-                                            }
-                                        >
-                                            {move || if pending_delete_id.get().as_deref() == Some(label_id.as_str()) { "Confirm delete?" } else { "Delete" }}
-                                        </button>
-                                    </div>
+                                    </button>
                                 </li>
                             }
                         }).collect_view()}
@@ -678,6 +706,262 @@ fn SessionList(
     }
 }
 
+/// The session detail screen (`../design/DESIGN.md` → *Key Screens ·
+/// Session*) — opened after stopping a recording and from a History card
+/// (`session_detail_id` is set from both places in `App`). Built on the
+/// shared `Sheet`: a dynamic title (the formatted timestamp), a dynamic
+/// invoker (whichever record button or session card opened it), and the
+/// `⋯` export/delete menu in `header_extra`.
+///
+/// Fetches the full `Session` itself via `get_session` on open rather than
+/// relying on the (truncated-preview, translation-less-if-untranslated)
+/// copy already in the shared `sessions` list, since that list is what's
+/// updated (or pruned, on delete) once this sheet acts on the session.
+#[component]
+fn SessionDetailSheet(
+    session_detail_id: RwSignal<Option<String>>,
+    invoker: Signal<Option<web_sys::HtmlElement>>,
+    sessions: RwSignal<Vec<Session>>,
+    default_target_lang: RwSignal<String>,
+    error_message: RwSignal<Option<String>>,
+) -> impl IntoView {
+    let detail = RwSignal::new(None::<Session>);
+    let loading = RwSignal::new(false);
+    let view_mode = RwSignal::new(SessionView::Original);
+    let target_lang = RwSignal::new(default_target_lang.get_untracked());
+    let translating = RwSignal::new(false);
+    let menu_open = RwSignal::new(false);
+    let pending_delete = RwSignal::new(false);
+
+    // Refetches only on an actual id change (open with a new/different
+    // session), not on every reactive rerun — same edge-detection shape as
+    // Sheet's own focus effect above.
+    Effect::new(move |prev: Option<Option<String>>| {
+        let id = session_detail_id.get();
+        let changed = id != prev.clone().unwrap_or(None);
+        if changed {
+            if let Some(id) = id.clone() {
+                detail.set(None);
+                view_mode.set(SessionView::Original);
+                menu_open.set(false);
+                pending_delete.set(false);
+                target_lang.set(default_target_lang.get_untracked());
+                loading.set(true);
+                spawn_local(async move {
+                    let args = GetSessionArgs { id: &id };
+                    match tauri_sys::core::invoke_result::<Option<Session>, String>(
+                        "get_session",
+                        args,
+                    )
+                    .await
+                    {
+                        Ok(Some(session)) => {
+                            // A session that was already translated before
+                            // (e.g. reopened from History) should show the
+                            // toggle pointed at *that* language, not silently
+                            // fall back to the app-wide default while still
+                            // displaying the old translation underneath.
+                            if let Some(lang) = session.target_lang.clone() {
+                                target_lang.set(lang);
+                            }
+                            detail.set(Some(session));
+                        }
+                        Ok(None) => error_message.set(Some("Session not found.".to_string())),
+                        Err(e) => error_message.set(Some(e)),
+                    }
+                    loading.set(false);
+                });
+            }
+        }
+        id
+    });
+
+    // The toggle's one backend call (`../design/DESIGN.md` → *Key Screens ·
+    // Session*: "one tap translates the session"). A translation already
+    // cached on `detail` for `lang` just switches the view; otherwise this
+    // is the same one-shot `translate_text` call the old bottom-of-page
+    // control made, persisted onto `detail` so re-toggling is instant.
+    let translate_now = move |lang: String| {
+        target_lang.set(lang.clone());
+        let cached = detail.get_untracked().is_some_and(|s| {
+            s.translation.is_some() && s.target_lang.as_deref() == Some(lang.as_str())
+        });
+        if cached {
+            view_mode.set(SessionView::Translated);
+            return;
+        }
+        let Some(id) = session_detail_id.get_untracked() else {
+            return;
+        };
+        translating.set(true);
+        error_message.set(None);
+        spawn_local(async move {
+            let args = TranslateArgs {
+                session_id: &id,
+                target_lang: &lang,
+            };
+            match tauri_sys::core::invoke_result::<String, String>("translate_text", args).await {
+                Ok(text) => {
+                    detail.update(|maybe| {
+                        if let Some(session) = maybe {
+                            session.translation = Some(text);
+                            session.target_lang = Some(lang);
+                        }
+                    });
+                    view_mode.set(SessionView::Translated);
+                }
+                Err(e) => error_message.set(Some(e)),
+            }
+            translating.set(false);
+        });
+    };
+
+    let export_txt = move |_| {
+        menu_open.set(false);
+        let Some(id) = session_detail_id.get_untracked() else {
+            return;
+        };
+        spawn_local(async move {
+            let args = ExportSessionTxtArgs { id: &id };
+            match tauri_sys::core::invoke_result::<Option<String>, String>(
+                "export_session_txt",
+                args,
+            )
+            .await
+            {
+                Ok(_) => error_message.set(None),
+                Err(e) => error_message.set(Some(e)),
+            }
+        });
+    };
+
+    let export_srt = move |_| {
+        menu_open.set(false);
+        let Some(id) = session_detail_id.get_untracked() else {
+            return;
+        };
+        spawn_local(async move {
+            let args = ExportSessionSrtArgs { id: &id };
+            match tauri_sys::core::invoke_result::<Option<String>, String>(
+                "export_session_srt",
+                args,
+            )
+            .await
+            {
+                Ok(_) => error_message.set(None),
+                Err(e) => error_message.set(Some(e)),
+            }
+        });
+    };
+
+    let delete_now = move |_| {
+        let Some(id) = session_detail_id.get_untracked() else {
+            return;
+        };
+        if pending_delete.get_untracked() {
+            pending_delete.set(false);
+            spawn_local(async move {
+                let args = DeleteSessionArgs { id: &id };
+                match tauri_sys::core::invoke_result::<(), String>("delete_session", args).await {
+                    Ok(()) => {
+                        sessions.update(|list| list.retain(|s| s.id != id));
+                        session_detail_id.set(None);
+                    }
+                    Err(e) => error_message.set(Some(e)),
+                }
+            });
+        } else {
+            pending_delete.set(true);
+        }
+    };
+
+    view! {
+        <Sheet
+            open=Signal::derive(move || session_detail_id.get().is_some())
+            on_close=Callback::new(move |_| session_detail_id.set(None))
+            title=Signal::derive(move || {
+                detail.get().map(|s| format_session_datetime(&s.created_at)).unwrap_or_default()
+            })
+            variant="session-detail-sheet"
+            invoker=invoker
+            header_extra=std::sync::Arc::new(move || view! {
+                <div class="session-menu-wrap">
+                    <button
+                        class="session-menu-toggle"
+                        aria-label="Session menu"
+                        aria-expanded=move || if menu_open.get() { "true" } else { "false" }
+                        title="Session menu"
+                        on:click=move |_| menu_open.update(|open| *open = !*open)
+                    >
+                        <MoreHorizontal/>
+                    </button>
+                    <div class="session-menu" class:is-open=move || menu_open.get()>
+                        <button class="session-menu-item" on:click=export_txt>"Export TXT"</button>
+                        <button class="session-menu-item" on:click=export_srt>"Export SRT"</button>
+                        <button
+                            class="session-menu-item session-menu-delete"
+                            class:is-confirming=move || pending_delete.get()
+                            on:click=delete_now
+                        >
+                            {move || if pending_delete.get() { "Confirm delete?" } else { "Delete" }}
+                        </button>
+                    </div>
+                </div>
+            }.into_any())
+        >
+            {move || {
+                if loading.get() {
+                    view! { <p class="sessions-empty">"Loading…"</p> }.into_any()
+                } else if let Some(session) = detail.get() {
+                    let language = session.language.clone().unwrap_or_else(|| "—".to_string());
+                    let duration = format_duration_label(session.duration_ms);
+                    let original_text = session.transcript.clone();
+                    let translated_text = session.translation.clone().unwrap_or_default();
+                    view! {
+                        <div class="session-detail">
+                            <p class="session-detail-meta">{language}" · "{duration}</p>
+                            <div class="session-detail-text">
+                                {move || match view_mode.get() {
+                                    SessionView::Original => original_text.clone(),
+                                    SessionView::Translated => translated_text.clone(),
+                                }}
+                            </div>
+                            {move || translating.get().then(|| view! {
+                                <p class="translate-status">"Running locally — usually a few seconds, longer the first time a language pair's model needs downloading."</p>
+                            })}
+                            <div class="translate-toggle" role="group" aria-label="Session view">
+                                <button
+                                    class="toggle-segment"
+                                    class:is-active=move || view_mode.get() == SessionView::Original
+                                    on:click=move |_| view_mode.set(SessionView::Original)
+                                >
+                                    "Original"
+                                </button>
+                                <select
+                                    class="toggle-segment toggle-target"
+                                    class:is-active=move || view_mode.get() == SessionView::Translated
+                                    aria-label="Translate into"
+                                    prop:value=move || target_lang.get()
+                                    disabled=move || translating.get()
+                                    on:mousedown=move |_| translate_now(target_lang.get_untracked())
+                                    on:change=move |ev| translate_now(event_target_value(&ev))
+                                >
+                                    {TARGET_LANGUAGES
+                                        .iter()
+                                        .map(|(code, label)| view! { <option value=*code>{*label}</option> })
+                                        .collect_view()}
+                                </select>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <p class="sessions-empty">"Session not found."</p> }.into_any()
+                }
+            }}
+        </Sheet>
+    }
+}
+
 #[component]
 fn App() -> impl IntoView {
     let theme_mode = RwSignal::new(stored_theme_mode());
@@ -697,7 +981,9 @@ fn App() -> impl IntoView {
     // tracks its own `started_at` for `duration_ms`, but never surfaces it,
     // so this counts locally: one interval, started when `recording` goes
     // true and cleared when it goes false. Tick-counted rather than read off
-    // a clock — a second's drift on a label is not worth a `js-sys` dep.
+    // a clock — a second's drift on a live label doesn't matter enough to
+    // reach for `js_sys::Date` here (unlike the session detail timestamp
+    // below, which does need it).
     let elapsed_secs = RwSignal::new(0_u32);
     Effect::new(move |previous: Option<Option<IntervalHandle>>| {
         if let Some(Some(handle)) = previous {
@@ -713,19 +999,17 @@ fn App() -> impl IntoView {
         )
         .ok()
     });
-    let session_id = RwSignal::new(None::<String>);
     let transcript_lines = RwSignal::new(Vec::<String>::new());
     let detected_language = RwSignal::new(None::<String>);
     let error_message = RwSignal::new(None::<String>);
     let target_lang = RwSignal::new("pt".to_string());
-    let translated_text = RwSignal::new(None::<String>);
-    let translating = RwSignal::new(false);
     let settings_open = RwSignal::new(false);
     let history_open = RwSignal::new(false);
     // The sheets return focus to whichever header button opened them —
     // `../design/DESIGN.md` → *Accessibility*.
     let settings_toggle_ref = NodeRef::<leptos::html::Button>::new();
     let history_toggle_ref = NodeRef::<leptos::html::Button>::new();
+    let record_button_ref = NodeRef::<leptos::html::Button>::new();
     let models = RwSignal::new(Vec::<ModelInfo>::new());
     let models_loading = RwSignal::new(false);
     let downloading_size = RwSignal::new(None::<ModelSize>);
@@ -740,7 +1024,17 @@ fn App() -> impl IntoView {
     let selected_device_id = RwSignal::new(None::<String>);
     let sessions = RwSignal::new(Vec::<Session>::new());
     let sessions_loading = RwSignal::new(true);
-    let pending_delete_id = RwSignal::new(None::<String>);
+    // The session detail sheet (`../design/DESIGN.md` → *Key Screens ·
+    // Session*): `Some(id)` opens it on that session, from either the record
+    // button (set after `stop_recording` below) or a History card
+    // (`on_open_session` below). `session_detail_invoker` is whichever of
+    // those actually opened it, so the sheet can return focus there on close.
+    let session_detail_id = RwSignal::new(None::<String>);
+    let session_detail_invoker = RwSignal::new(None::<web_sys::HtmlElement>);
+    let on_open_session = Callback::new(move |(id, el): (String, web_sys::HtmlElement)| {
+        session_detail_invoker.set(Some(el));
+        session_detail_id.set(Some(id));
+    });
     // The history list is collapsed to the newest few by default so the live
     // transcript/translation stay in view — see SESSION_PREVIEW_COUNT.
     let sessions_expanded = RwSignal::new(false);
@@ -819,9 +1113,19 @@ fn App() -> impl IntoView {
             if recording.get_untracked() {
                 match tauri_sys::core::invoke_result::<String, String>("stop_recording", ()).await {
                     Ok(id) => {
-                        session_id.set(Some(id));
                         recording.set(false);
                         audio_level.set(0.0);
+                        // Opens the session detail sheet on the just-finished
+                        // session (`../design/DESIGN.md` → *Key Screens ·
+                        // Session*: "Opened after stopping..."), returning
+                        // focus to the record button on close since that's
+                        // what the user actually pressed to get here.
+                        session_detail_invoker.set(
+                            record_button_ref
+                                .get_untracked()
+                                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok()),
+                        );
+                        session_detail_id.set(Some(id));
                         spawn_local(async move {
                             let args = ListSessionsArgs {
                                 limit: Some(20),
@@ -843,8 +1147,7 @@ fn App() -> impl IntoView {
             } else {
                 transcript_lines.set(Vec::new());
                 detected_language.set(None);
-                translated_text.set(None);
-                session_id.set(None);
+                session_detail_id.set(None);
                 let args = StartRecordingArgs {
                     device_id: selected_device_id.get_untracked(),
                 };
@@ -854,26 +1157,6 @@ fn App() -> impl IntoView {
                 }
             }
             busy.set(false);
-        });
-    };
-
-    let do_translate = move |_| {
-        let Some(id) = session_id.get_untracked() else {
-            return;
-        };
-        translating.set(true);
-        error_message.set(None);
-        spawn_local(async move {
-            let lang = target_lang.get_untracked();
-            let args = TranslateArgs {
-                session_id: &id,
-                target_lang: &lang,
-            };
-            match tauri_sys::core::invoke_result::<String, String>("translate_text", args).await {
-                Ok(text) => translated_text.set(Some(text)),
-                Err(e) => error_message.set(Some(e)),
-            }
-            translating.set(false);
         });
     };
 
@@ -935,8 +1218,7 @@ fn App() -> impl IntoView {
                     sessions=sessions
                     sessions_loading=sessions_loading
                     sessions_expanded=sessions_expanded
-                    pending_delete_id=pending_delete_id
-                    error_message=error_message
+                    on_open=on_open_session
                 />
             </aside>
         <main class="app">
@@ -980,9 +1262,12 @@ fn App() -> impl IntoView {
             <Sheet
                 open=Signal::derive(move || settings_open.get())
                 on_close=Callback::new(move |_| settings_open.set(false))
-                title="Settings"
+                title=Signal::derive(|| "Settings".to_string())
                 variant="settings-sheet"
-                invoker=settings_toggle_ref
+                invoker=Signal::derive(move || {
+                    settings_toggle_ref.get().and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+                })
+                header_extra=std::sync::Arc::new(|| ().into_any())
             >
                 {move || {
                     if models_loading.get() || translation_models_loading.get() || devices_loading.get() {
@@ -1157,18 +1442,32 @@ fn App() -> impl IntoView {
             <Sheet
                 open=Signal::derive(move || history_open.get())
                 on_close=Callback::new(move |_| history_open.set(false))
-                title="History"
+                title=Signal::derive(|| "History".to_string())
                 variant="history-sheet"
-                invoker=history_toggle_ref
+                invoker=Signal::derive(move || {
+                    history_toggle_ref.get().and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+                })
+                header_extra=std::sync::Arc::new(|| ().into_any())
             >
                 <SessionList
                     sessions=sessions
                     sessions_loading=sessions_loading
                     sessions_expanded=sessions_expanded
-                    pending_delete_id=pending_delete_id
-                    error_message=error_message
+                    on_open=on_open_session
                 />
             </Sheet>
+
+            // Nested above History/Settings when opened from a card there
+            // (`.session-detail-sheet`'s higher z-index in styles.css) so its
+            // own back control returns to History rather than skipping past
+            // it to the record screen.
+            <SessionDetailSheet
+                session_detail_id=session_detail_id
+                invoker=Signal::derive(move || session_detail_invoker.get())
+                sessions=sessions
+                default_target_lang=target_lang
+                error_message=error_message
+            />
 
             {move || {
                 error_message.get().map(|msg| view! {
@@ -1213,29 +1512,6 @@ fn App() -> impl IntoView {
                 }}
             </section>
 
-            // Stopgap. DESIGN.md puts translation on the session detail screen
-            // as an in-place toggle (#74); until that exists, removing this
-            // would drop the feature outright. So it stays, but only once
-            // there is a session to translate — never as an always-on section
-            // competing with the transcript for the screen.
-            {move || session_id.get().is_some().then(|| view! {
-                <section class="translate">
-                    <h2><Languages/> <span>"Translate"</span></h2>
-                    <div class="controls">
-                        <button
-                            on:click=do_translate
-                            disabled=move || translating.get()
-                        >
-                            {move || if translating.get() { "Translating…" } else { "Translate" }}
-                        </button>
-                    </div>
-                    {move || translating.get().then(|| view! {
-                        <p class="translate-status">"Running locally — usually a few seconds, longer the first time a language pair's model needs downloading."</p>
-                    })}
-                    <p class="translated">{move || translated_text.get().unwrap_or_default()}</p>
-                </section>
-            })}
-
             // Pinned to the bottom of the viewport by the app's flex column —
             // language pill, then the record button and its status line, in
             // the order DESIGN.md's mock lays them out.
@@ -1267,6 +1543,7 @@ fn App() -> impl IntoView {
                 <div class="record-control">
                     <button
                         class="record-button"
+                        node_ref=record_button_ref
                         class:is-recording=move || record_state.get() == RecordState::Recording
                         class:is-processing=move || record_state.get() == RecordState::Processing
                         class:is-disabled=move || record_state.get() == RecordState::Disabled

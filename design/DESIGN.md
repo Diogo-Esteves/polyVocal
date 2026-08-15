@@ -280,19 +280,17 @@ anywhere` (transcripts contain arbitrary user speech in arbitrary scripts).
 The app used to be one scrolling page of seven stacked sections, with
 **Recent Sessions above the live Transcript** — while you were recording,
 you watched a list of old sessions while your words rendered off-screen
-below. Record (below) fixes that inversion; Session, History and Settings
-are still `[spec]`.
+below. Record (below) fixes that inversion; Settings is still `[spec]`.
 
 ### Record — home `[built]`
 
 Transcript flows upward, newest at the bottom, like a chat log. Everyone
 already knows how to read this.
 
-Shipped in #72, with two deliberate interim compromises until the screens
-below exist: History is a header toggle that takes the main area over rather
-than a sheet (#73), and the translate control still lives under the
-transcript — rendered only once there is a session to translate — rather
-than on the session (#74).
+Shipped in #72. The two interim compromises noted in earlier drafts — History
+taking over the main area instead of being a sheet, and translation living
+under the transcript instead of on the session — were resolved by #73 and
+#74 respectively.
 
 ```
 ┌──────────────────────────────┐
@@ -318,7 +316,7 @@ Empty state replaces the transcript area with one line — *"Tap the brush
 and start talking."* — and nothing else. No cards, no tips, no onboarding
 carousel.
 
-### Session — after stopping, and from History
+### Session — after stopping, and from History `[built]`
 
 Translation lives here as a toggle on the session, not as a separate
 section with its own button at the bottom of the page.
@@ -337,10 +335,12 @@ section with its own button at the bottom of the page.
 └──────────────────────────────┘
 ```
 
-Export and delete move **inside** the opened session, into the `⋯` menu.
-Today they sit side by side on every row of the list, which both squeezes
-badly at 360px and puts a destructive action one mistap away while
-scrolling.
+Export and delete live **inside** the opened session, in the `⋯` menu.
+Previously they sat side by side on every row of the list, which both
+squeezed badly at 360px and put a destructive action one mistap away while
+scrolling. Shipped in #74, opening from the record button after `stop_recording`
+and from a History card, and nesting over an already-open History sheet when
+opened the second way.
 
 ### History — sheet, or left rail ≥900px
 
@@ -395,9 +395,9 @@ already know what a Whisper model is.
   a settings choice between the two remain unbuilt.
 - **Live waveform** `[spec]` — carried by the record button's strands.
   Blocked on the audio level event described above.
-- **Inline translation** `[spec]` — a toggle on the session, translating in
-  place. Today this is a separate section at the bottom of the page with
-  its own language picker and button, run after the fact.
+- **Inline translation** `[built]` — a `[ Original | English ⌄ ]` toggle on
+  the session, translating in place with the same one-shot `translate_text`
+  call the old bottom-of-page control made.
 - **Sheets, not pages** `[spec]` — History and Settings slide over the
   record screen and dismiss back to it. The record screen is always the
   thing underneath; you can never get lost.
