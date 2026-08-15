@@ -249,7 +249,12 @@ mod tests {
     async fn test_translate_returns_input_unchanged_for_same_language() {
         struct UnusedDownloader;
         impl ModelDownloader for UnusedDownloader {
-            async fn download_to(&self, _url: &str, _dest: &std::path::Path) -> Result<()> {
+            async fn download_to(
+                &self,
+                _url: &str,
+                _dest: &std::path::Path,
+                _expected_sha256: &str,
+            ) -> Result<()> {
                 panic!("should not download anything for a same-language translation");
             }
         }
@@ -267,7 +272,12 @@ mod tests {
     async fn test_translate_returns_empty_string_for_empty_input() {
         struct UnusedDownloader;
         impl ModelDownloader for UnusedDownloader {
-            async fn download_to(&self, _url: &str, _dest: &std::path::Path) -> Result<()> {
+            async fn download_to(
+                &self,
+                _url: &str,
+                _dest: &std::path::Path,
+                _expected_sha256: &str,
+            ) -> Result<()> {
                 panic!("should not download anything for empty input");
             }
         }
@@ -285,7 +295,12 @@ mod tests {
     async fn test_translate_rejects_unsupported_pair_without_downloading() {
         struct UnusedDownloader;
         impl ModelDownloader for UnusedDownloader {
-            async fn download_to(&self, _url: &str, _dest: &std::path::Path) -> Result<()> {
+            async fn download_to(
+                &self,
+                _url: &str,
+                _dest: &std::path::Path,
+                _expected_sha256: &str,
+            ) -> Result<()> {
                 panic!("should not download anything for an unsupported pair");
             }
         }
