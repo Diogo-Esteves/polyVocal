@@ -196,6 +196,7 @@ mod tests {
 
     fn temp_models_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
