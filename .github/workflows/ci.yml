@@ -81,6 +81,15 @@ jobs:
         working-directory: src
         run: trunk build
 
+      - name: cargo test (frontend)
+        working-directory: src
+        # Host target, not wasm32-unknown-unknown: this crate has no [lib]
+        # target, and `cargo test --bin` compiles and links cleanly against
+        # the host despite depending on wasm-bindgen/web-sys/tauri-sys, since
+        # the tested functions are pure logic that never touches a JS/DOM
+        # binding — no browser or Node.js test runner needed.
+        run: cargo test --bin polyvocal-ui
+
   test:
     name: Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

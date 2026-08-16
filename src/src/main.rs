@@ -386,6 +386,22 @@ struct ExportSessionSrtArgs<'a> {
 /// transcript and translation off the bottom of the screen.
 const SESSION_PREVIEW_COUNT: usize = 3;
 
+/// Character budget for a session card's transcript preview before it's
+/// truncated with a trailing "…".
+const SESSION_PREVIEW_CHAR_LIMIT: usize = 80;
+
+/// Truncates `transcript` to at most `max_chars` characters, appending "…"
+/// when it was actually cut short. Counts by `char`, not byte, so this is
+/// safe on multi-byte UTF-8 transcripts (translated/non-English sessions).
+fn truncate_preview(transcript: &str, max_chars: usize) -> String {
+    if transcript.chars().count() > max_chars {
+        let truncated: String = transcript.chars().take(max_chars).collect();
+        format!("{truncated}…")
+    } else {
+        transcript.to_string()
+    }
+}
+
 /// MVP language pairs, matching `translation::SUPPORTED_LANGUAGES` in the backend.
 const TARGET_LANGUAGES: [(&str, &str); 3] =
     [("en", "English"), ("pt", "Portuguese"), ("es", "Spanish")];
@@ -657,12 +673,7 @@ fn SessionList(
                     <ul class="session-list">
                         {visible.into_iter().map(|session| {
                             let id = session.id.clone();
-                            let preview: String = if session.transcript.chars().count() > 80 {
-                                let truncated: String = session.transcript.chars().take(80).collect();
-                                format!("{truncated}…")
-                            } else {
-                                session.transcript.clone()
-                            };
+                            let preview = truncate_preview(&session.transcript, SESSION_PREVIEW_CHAR_LIMIT);
                             let language_label = session.language.clone().unwrap_or_else(|| "—".to_string());
                             let created_at = session.created_at.clone();
                             let translation_note = if session.translation.is_some() {
@@ -1588,4 +1599,57 @@ fn main() {
     // the OS-default theme and then flipping.
     apply_theme_mode(stored_theme_mode());
     leptos::mount::mount_to_body(App);
+}
+
+// Plain native `#[test]`s, not `wasm-bindgen-test` — this crate has no
+// `[lib]` target (only `[[bin]]`), and `cargo test --bin polyvocal-ui`
+// already compiles and links cleanly against the host target despite
+// depending on wasm-bindgen/web-sys/tauri-sys, since none of these
+// specific functions touch a JS/DOM binding. No browser or Node.js test
+// runner needed for logic this pure.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_mode_from_storage_value_recognises_light_and_dark() {
+        assert!(ThemeMode::from_storage_value("light") == ThemeMode::Light);
+        assert!(ThemeMode::from_storage_value("dark") == ThemeMode::Dark);
+    }
+
+    #[test]
+    fn theme_mode_from_storage_value_falls_back_to_auto() {
+        assert!(ThemeMode::from_storage_value("") == ThemeMode::Auto);
+        assert!(ThemeMode::from_storage_value("sepia") == ThemeMode::Auto);
+    }
+
+    #[test]
+    fn truncate_preview_passes_short_transcripts_through_unchanged() {
+        assert_eq!(truncate_preview("hello world", 80), "hello world");
+    }
+
+    #[test]
+    fn truncate_preview_cuts_long_transcripts_with_an_ellipsis() {
+        let transcript = "a".repeat(100);
+        let preview = truncate_preview(&transcript, 80);
+        assert_eq!(preview.chars().count(), 81); // 80 chars + the ellipsis
+        assert!(preview.ends_with('…'));
+        assert!(preview.starts_with(&"a".repeat(80)));
+    }
+
+    #[test]
+    fn truncate_preview_counts_by_char_not_byte_on_multibyte_text() {
+        // Portuguese/Spanish transcripts routinely carry multi-byte UTF-8
+        // (á, ã, ñ, …) — a byte-indexed truncation would panic here on a
+        // non-char-boundary split; this only proves it doesn't.
+        let transcript = "á".repeat(100);
+        let preview = truncate_preview(&transcript, 80);
+        assert_eq!(preview.chars().count(), 81);
+    }
+
+    #[test]
+    fn truncate_preview_at_exactly_the_limit_is_not_truncated() {
+        let transcript = "a".repeat(80);
+        assert_eq!(truncate_preview(&transcript, 80), transcript);
+    }
 }
