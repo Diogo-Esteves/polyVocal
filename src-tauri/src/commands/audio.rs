@@ -167,14 +167,8 @@ pub async fn start_recording(
     // recording is still recoverable (DEC-009); `stop_recording` finalises
     // it. Created only once capture is confirmed running — a failed start
     // shouldn't leave an empty phantom session in the history.
+    begin_session_row(pool.inner(), &session_id, &stop_tx).await?;
     let repository = SessionRepository::new(pool.inner().clone());
-    if let Err(e) = repository.create_in_progress(&session_id).await {
-        // The capture thread is already running, blocked on `stop_rx` — tell
-        // it to shut down rather than leaking it (and the open microphone
-        // stream) on this early return.
-        let _ = stop_tx.send(());
-        return Err(e.to_string());
-    }
 
     let task = tokio::spawn(async move {
         let mut pipeline = pipeline;
@@ -283,6 +277,26 @@ pub async fn start_recording(
         task,
     });
 
+    Ok(())
+}
+
+/// Creates the in-progress session row `start_recording` needs before the
+/// transcription task can begin (DEC-009). Split out so the
+/// rollback-on-failure path — telling an already-running capture thread to
+/// shut down rather than leaking it and the open microphone stream — is
+/// unit-testable without a real audio device or Whisper model, the same way
+/// `finish_recording` below is tested against a real in-memory SQLite pool
+/// rather than a mock.
+async fn begin_session_row(
+    pool: &SqlitePool,
+    session_id: &str,
+    stop_tx: &std::sync::mpsc::Sender<()>,
+) -> Result<(), String> {
+    let repository = SessionRepository::new(pool.clone());
+    if let Err(e) = repository.create_in_progress(session_id).await {
+        let _ = stop_tx.send(());
+        return Err(e.to_string());
+    }
     Ok(())
 }
 
@@ -448,7 +462,7 @@ async fn transcribe_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::models::SESSION_STATUS_COMPLETE;
+    use crate::storage::models::{SESSION_STATUS_COMPLETE, SESSION_STATUS_IN_PROGRESS};
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
@@ -572,6 +586,47 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn begin_session_row_creates_an_in_progress_row() {
+        let pool = test_pool().await;
+        let (stop_tx, _stop_rx) = std::sync::mpsc::channel::<()>();
+        let id = uuid::Uuid::new_v4().to_string();
+
+        begin_session_row(&pool, &id, &stop_tx)
+            .await
+            .expect("should succeed");
+
+        let repository = SessionRepository::new(pool);
+        let saved = repository
+            .get(&id)
+            .await
+            .expect("query should succeed")
+            .expect("session row should exist");
+        assert_eq!(saved.status, SESSION_STATUS_IN_PROGRESS);
+    }
+
+    /// A failed insert (forced here via a duplicate id, since `id` is the
+    /// table's primary key) must not leave the capture thread it's paired
+    /// with blocked forever on `stop_rx` — it should be told to shut down.
+    #[tokio::test]
+    async fn begin_session_row_signals_stop_on_failure() {
+        let pool = test_pool().await;
+        let id = uuid::Uuid::new_v4().to_string();
+        let repository = SessionRepository::new(pool.clone());
+        repository
+            .create_in_progress(&id)
+            .await
+            .expect("first insert should succeed");
+
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let result = begin_session_row(&pool, &id, &stop_tx).await;
+
+        assert!(result.is_err(), "duplicate id should fail to insert");
+        stop_rx
+            .try_recv()
+            .expect("failure path should signal the capture thread to stop");
     }
 
     /// Regression test for issue #46: a panicked capture thread must
