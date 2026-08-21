@@ -163,15 +163,25 @@ body {
  * Unchanged by the 900px rail breakpoint below — `.app`'s own `margin: 0
  * auto` still centres it in whatever width `.shell` leaves it once
  * `.history-rail` claims its 280px, which is what "nothing else changes"
- * (design/DESIGN.md → *Layout*) means in practice. */
+ * (design/DESIGN.md → *Layout*) means in practice.
+ *
+ * Below 480px the column is full-bleed (no side gutter of its own —
+ * `.app-header`/`.action-bar` carry their own horizontal padding, and
+ * `.transcript` already pads itself); from 480px up it caps and centres,
+ * per design/DESIGN.md → *Layout*. */
 .app {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   height: 100dvh;
-  max-width: 640px;
+  max-width: 480px;
   margin: 0 auto;
-  padding: 0 var(--space-6);
+}
+
+@media (min-width: 480px) {
+  .app {
+    padding: 0 var(--space-6);
+  }
 }
 
 /* The persistent History rail — design/DESIGN.md → *Layout*: "At >= 900px
@@ -210,17 +220,20 @@ body {
  * takes them out of the tab order and the accessibility tree while closed,
  * not `display`, which couldn't transition at all.
  *
- * Sized and positioned exactly like `.app` (`max-width: 640px; margin: 0
+ * Sized and positioned exactly like `.app` (`max-width: 480px; margin: 0
  * auto`, achieved here via the `inset: 0` + auto-margin trick for a fixed
  * element) so a sheet reads as the same shell showing different content,
- * per the "one layout tree" principle above — never a second design. */
+ * per the "one layout tree" principle above — never a second design. Its own
+ * horizontal padding is unconditional (unlike `.app`'s) because sheet
+ * content — `.sheet-header`, `.sheet-body` — doesn't pad itself the way
+ * `.transcript` does. */
 .sheet {
   position: fixed;
   inset: 0;
   z-index: 21;
   display: flex;
   flex-direction: column;
-  max-width: 640px;
+  max-width: 480px;
   margin: 0 auto;
   padding: 0 var(--space-6);
   background: var(--color-bg);
@@ -238,7 +251,7 @@ body {
   transition: transform var(--motion-base) ease;
 }
 
-/* The scrim behind a sheet. Only visible past 640px, where `.sheet` no
+/* The scrim behind a sheet. Only visible past 480px, where `.sheet` no
  * longer fills the viewport — below that it's fully covered by the opaque
  * sheet itself. Also the click target that dismisses the sheet. */
 .sheet-backdrop {
@@ -310,6 +323,16 @@ body {
   gap: 1rem;
   flex-shrink: 0;
   padding-top: var(--space-6);
+}
+
+/* Below 480px `.app` is full-bleed (design/DESIGN.md → *Layout*), so this is
+ * the only thing keeping the header off the screen edge at that width;
+ * `.app`'s own padding takes over from 480px up. */
+@media (max-width: 479.98px) {
+  .app-header {
+    padding-left: var(--space-6);
+    padding-right: var(--space-6);
+  }
 }
 
 /* Mark + wordmark lockup. The mark carries its own px size (it is a detail
@@ -575,6 +598,22 @@ select:focus-visible {
   border-top: 1px solid var(--color-hairline);
 }
 
+/* Below 480px `.app` is full-bleed, so the action bar carries its own
+ * horizontal padding plus `env(safe-area-inset-*)` on top of it —
+ * design/DESIGN.md → *Layout*: "< 480px: full-bleed, with
+ * env(safe-area-inset-*) padding on the action bar", so a home indicator or
+ * notch never sits under the record button. `max()` keeps the space-6
+ * gutter even where the inset is 0. From 480px up, `.app`'s own padding
+ * takes over and the inset no longer applies (there's no notch to clear
+ * once the column is inset from the viewport edge already). */
+@media (max-width: 479.98px) {
+  .action-bar {
+    padding-left: max(var(--space-6), env(safe-area-inset-left));
+    padding-right: max(var(--space-6), env(safe-area-inset-right));
+    padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+  }
+}
+
 /* "Português → English ⌄" — set once, a default target for translation, not
  * a live trigger. The source half is whatever Whisper detected, "Auto" until
  * it has. */
@@ -700,10 +739,17 @@ select:focus-visible {
   gap: 0.5rem;
   /* Errors are one-liners in practice; the cap is what keeps a stack trace
    * from a failed command from pushing the action bar off the bottom. Capped,
-   * so it never needs to shrink — the transcript absorbs the flex instead. */
+   * so it never needs to shrink — the transcript absorbs the flex instead.
+   * `min-width: 0` overrides the flex item's default `auto`, which sizes to
+   * the text's unbroken min-content width (e.g. a wasm stack trace with no
+   * spaces) and would otherwise blow out `.app` sideways despite the
+   * `overflow-wrap` below — design/DESIGN.md → *Layout*'s "no horizontal
+   * scrolling ever" invariant. */
   flex: 0 0 auto;
+  min-width: 0;
   max-height: 25vh;
   overflow-y: auto;
+  overflow-wrap: anywhere;
   margin: 0;
   color: var(--color-danger);
   background: var(--color-danger-bg);
