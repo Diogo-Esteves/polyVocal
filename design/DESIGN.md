@@ -249,12 +249,11 @@ pulse and the strands hold a static extended pose.
 
 ---
 
-## Layout `[partly built]`
+## Layout `[built]`
 
-Built today: the single centred column that fills the viewport, the action
-bar pinned to its bottom, `overflow-wrap: anywhere` on transcript text, and
-44×44px header controls. The column caps at 640px rather than 480px, and
-the breakpoint table below is still `[spec]` — the responsive system is #78.
+The single centred column that fills the viewport, the action bar pinned to
+its bottom, `overflow-wrap: anywhere` on transcript text, 44×44px header
+controls, and the breakpoint table below (#78) are all built.
 
 **One layout tree for desktop and mobile.** A single column, `max-width:
 480px`, centred, with a fixed action bar at the bottom. Phones get it
