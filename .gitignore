@@ -46,3 +46,9 @@ logs/
 # Internal-only planning docs — kept locally, not published to the public repo
 /docs/DECISIONS.md
 /docs/SPEC.md
+
+# Claude Code: CLAUDE.md, .claude/settings.json, and .claude/agents|rules|commands
+# are shared project config and tracked. CLAUDE.local.md and settings.local.json
+# are personal/machine-specific and stay out of the repo.
+/CLAUDE.local.md
+.claude/settings.local.json

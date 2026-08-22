@@ -15,6 +15,27 @@ missing. Do not guess or fill gaps with assumptions.** Guessing is the
 single biggest way a cheap-model implementation goes wrong. Ask by stating
 precisely which file/behavior/edge-case is unclear, then stop.
 
+**Read the CURRENT state of every file you're about to touch, in full,
+before editing.** Never trust line numbers quoted in the spec — other work
+may have landed on `main` since that spec was written, and a stale line
+number is the single most common way to waste a turn.
+
+## Escalate instead of guessing
+
+Hand back to the orchestrating session — don't attempt it at this tier — if the task turns
+out to touch:
+- VAD/audio signal-processing logic (`src-tauri/src/vad/`, `src-tauri/src/audio/`) where a
+  threshold or timing change trades off transcription accuracy against latency
+- the translation or transcription engine's model-loading/inference wiring itself, as
+  opposed to orchestration code that calls it
+- model checksum verification (`src-tauri/src/models/downloader.rs`) or the pinned model
+  source registry — these exist specifically to catch tampered/corrupted weights
+- a migration that reshapes or backfills *existing* rows, as opposed to adding a new
+  nullable column following the existing migration pattern
+
+These are places where a plausible-looking change can be silently wrong — worth a bigger
+model even though it costs more per token.
+
 ## Before you start
 
 Read `CLAUDE.md` at the repo root if you haven't already this session — it

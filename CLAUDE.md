@@ -28,95 +28,29 @@ Two independent Rust crates, no top-level Cargo workspace:
   truth for *why* things are built the way they are — read them before
   touching translation, audio, or storage internals.
 
-## Commands
+## Rules
 
-Run from the crate's own directory (`src-tauri/` or `src/`), not the repo root.
+Conventions are split by topic in `.claude/rules/` — read the one(s)
+relevant to what you're touching rather than all of them up front:
 
-```bash
-# Backend (src-tauri/)
-cargo check
-cargo fmt --all -- --check        # cargo fmt --all to fix
-cargo clippy --all-targets -- -D warnings
-cargo test --all                  # unit tests + tests/pipeline_integration.rs
+- `.claude/rules/commands.md` — build/lint/test commands, and the
+  `cargo test --all` network caveat. Read this before running any check.
+- `.claude/rules/testing.md` — test-pool and trait-seam-mocking patterns.
+  Read before adding or changing tests.
+- `.claude/rules/code-style.md` — formatting, error-handling, and comment
+  conventions.
+- `.claude/rules/workflow.md` — how work gets scoped against
+  `docs/ROADMAP.md`/GitHub issues, when to hand off to the `implementer`
+  or `chore` subagent, and branch/PR conventions.
 
-# Frontend (src/)
-cargo fmt --all -- --check
-cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
-trunk build                       # or `trunk serve` for dev
+## Local environment
 
-# Whole app
-cargo tauri dev                   # from repo root
-```
+Machine-specific setup — GUI availability, worktree build-cache tricks,
+headless-QA tooling paths, this checkout's Orca worktree conventions —
+lives in `CLAUDE.local.md` at the repo root if present. It's gitignored
+and not shared; if it's missing on your checkout there's nothing to read.
 
-CI (`.github/workflows/ci.yml`) runs all of the above across Linux/macOS/
-Windows and is the ground truth if this file drifts — check it if unsure.
+## Custom commands
 
-A handful of `#[ignore]`d tests in `src-tauri` (real Whisper/Silero/OPUS-MT
-inference, tagged e.g. `test_real_candle_translation_*`) download real
-model weights (hundreds of MB) on first run. They're not part of `cargo
-test --all`'s default set; run with `cargo test -- --ignored` only when
-you've touched engine/tokenizer/model-registry wiring and want to verify
-against real weights.
-
-## Testing conventions already established — follow them, don't reinvent
-
-- **In-memory SQLite per test**: a local `test_pool()` helper (duplicated
-  per test module, not shared — see `commands/translation.rs` and
-  `storage/repository.rs`) spins up `sqlite::memory:` with
-  `max_connections(1)` (a pool > 1 connection sees empty tables — each
-  connection gets its own in-memory DB) and runs `storage::db::run_migrations`.
-- **Trait-seam mocking for engines**: business logic that calls into real
-  ML inference (translation, transcription) is split into a small `trait`
-  (e.g. `Translator` in `commands/translation.rs`) so the orchestration
-  logic — source-language fallback, persistence, error handling — is
-  unit-tested (in a plain fn like `translate_session`) against a fake
-  implementation, while the real engine is exercised only by the
-  `#[ignore]`d end-to-end tests. Follow this pattern for any new engine
-  integration rather than mocking at the HTTP/FFI layer.
-- Tauri `#[tauri::command]` functions should stay thin — resolve state,
-  delegate to a plain, independently-testable async fn or a repository/
-  engine method. Don't put logic directly in the command body if it needs
-  test coverage.
-
-## Code style (from `CONTRIBUTING.md` — repeated here since agents don't always read that file)
-
-- Standard `rustfmt`; `cargo fmt` before committing.
-- `anyhow` for application errors, `thiserror` for library errors.
-- `tracing` macros (`info!`, `debug!`, `warn!`, `error!`) — never `println!`.
-- No JavaScript, ever — frontend changes stay in Leptos/Rust.
-- Commit messages: [Conventional Commits](https://www.conventionalcommits.org/)
-  (`feat:`, `fix:`, `docs:`, `chore:`, `ci:`).
-
-## Finding out what to work on next
-
-`docs/ROADMAP.md` is the checklist of phases/features, but **checkboxes can
-go stale** — a past session found "Language auto-detection" marked
-unchecked when it was in fact fully implemented end-to-end. Before treating
-an unchecked roadmap item as real work, grep the code for it first; before
-reporting one as done, verify the roadmap text still matches reality.
-
-## Working style notes
-
-- Prefer direct, in-place edits for normal-sized changes (a handful of
-  files, one concern) over spinning up a separate worktree — reserve
-  worktrees/parallel agents for genuinely independent, large-scope work.
-- Feature branches + PR, rebase-and-merge on GitHub (branch names so far:
-  `feat/...`, `chore/...`; PR merges rewrite commit hashes on `main` — if a
-  stacked branch stops appearing merged after another PR lands, that's why,
-  not a sign work was lost).
-- Run `cargo fmt`, `cargo clippy -D warnings`, and the full test suite
-  before calling backend work done — all three are cheap and CI enforces
-  them anyway.
-
-## Human-in-the-loop workflow
-
-Tasks are scoped against `docs/ROADMAP.md` (verified against real code
-first, per above) with the user. Once a task is fully specified — exact
-files, exact behavior, exact tests — mechanical implementation can be
-dispatched to the `implementer` subagent (`.claude/agents/implementer.md`),
-which runs on a cheaper model (Haiku) and reports back rather than
-guessing when a spec is incomplete. The user does QA on the result; git
-operations (commit, push, branch, PR) stay with the orchestrating agent,
-never the implementer. Reserve `implementer` for specced, mechanical work
-— judgment calls (architecture, scope, ambiguous requirements) should be
-reasoned through directly, not delegated to it.
+`.claude/commands/` has packaged workflows for recurring tasks — see
+`/precommit`, `/roadmap-check`, and `/triage-issue`.
