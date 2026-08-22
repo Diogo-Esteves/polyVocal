@@ -27,12 +27,11 @@ The name and logo draw on the hairbrush people grab as a stand-in microphone —
 ## Features
 
 - **Real-time transcription** — VAD-gated segments fed to Whisper for accurate, low-latency output
-- **Auto language detection** — speak English, Portuguese, Spanish (Hindi & Mandarin coming soon)
+- **Auto language detection** — English, Portuguese, Spanish (more languages planned)
 - **On-demand translation** — local OPUS-MT models via `candle`, no network required
 - **Local models only (MVP)** — bring your own models from HuggingFace, no lock-in
 - **Privacy first** — audio never leaves your device; transcripts stay local
 - **Cross-platform** — Linux, macOS, Windows
-- **Global hotkey** — trigger recording from any app (opt-in)
 - **Sync-ready data model** — cross-device history sync coming in a future release
 
 ---
@@ -79,15 +78,14 @@ On first launch, PolyVocal downloads the `tiny` Whisper model (~75 MB). Larger m
 
 ## Models
 
-PolyVocal bundles the `tiny` Whisper model. You can download larger models or bring your own from HuggingFace.
+PolyVocal downloads the `tiny` Whisper model on first launch. You can download larger models or bring your own from HuggingFace.
 
 | Model | Size | Notes |
 |---|---|---|
-| `tiny` | ~75 MB | Bundled — works immediately |
+| `tiny` | ~75 MB | Downloaded on first launch |
 | `base` | ~145 MB | Recommended for most users |
 | `small` | ~465 MB | Higher accuracy |
 | `medium` | ~1.5 GB | Best accuracy |
-| Custom | Any | Point to any GGUF-compatible model |
 
 ---
 

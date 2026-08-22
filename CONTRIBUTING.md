@@ -28,7 +28,7 @@ At this stage the codebase is moving fast. Before opening a PR:
 ### Prerequisites
 
 - Rust (stable, via `rustup`) — `rustup update stable`
-- Node.js (for Tauri CLI) — `npm install -g @tauri-apps/cli`
+- Tauri CLI — `cargo install tauri-cli`
 - `trunk` (Leptos/WASM build tool) — `cargo install trunk`
 - `wasm32-unknown-unknown` target — `rustup target add wasm32-unknown-unknown`
 - Tauri system dependencies — see [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS
@@ -37,7 +37,7 @@ At this stage the codebase is moving fast. Before opening a PR:
 
 ```bash
 # Clone the repo
-git clone https://github.com/diogoe/polyVocal.git
+git clone https://github.com/Diogo-Esteves/polyVocal.git
 cd polyVocal
 
 # Run the app in dev mode

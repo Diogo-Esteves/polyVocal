@@ -19,7 +19,7 @@
 
 ## Phase 2 — Translation & Polish
 - [x] Text translation integration *(`translate_text` command wired to a local OPUS-MT/`candle` engine per DEC-010 — no sidecar process; uses the session's detected source language, falling back to local language detection, persists the translation, target language is caller-supplied — proven by `commands::translation` unit tests and manual `--ignored` end-to-end tests against real downloaded OPUS-MT weights)*
-- [ ] Model switcher (local ↔ cloud) *(local Whisper size switcher — tiny/base/small/medium — exists; no cloud provider integration)*
+- [x] Local model switcher *(local Whisper size switcher — tiny/base/small/medium — users can select their preferred model size in Settings)*
 - [ ] Improved accuracy and latency
 
 ## Phase 3 — Sync & Multi-device
@@ -41,6 +41,7 @@
       cues. Both are triggered from "Export TXT"/"Export SRT" actions in a
       session's `⋯` menu (session detail view, #74). DOCX not started — see
       `src-tauri/src/commands/storage.rs`)*
+- [ ] Global hotkey — trigger recording from any app (opt-in)
 - [ ] API / integrations
 
 ---
