@@ -39,3 +39,12 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: ${{ matrix.working-directory }}
+          # Advisories triaged and intentionally not fixed yet — re-check when
+          # revisiting the linked issue, don't just widen this list on failure:
+          #   RUSTSEC-2023-0071 (rsa): pulled into Cargo.lock but not compiled
+          #     into any actual target (`cargo tree -i rsa --target all` is
+          #     empty) — not reachable. See #100.
+          #   RUSTSEC-2024-0437 (protobuf, via rust_tokenizers): only parses
+          #     this repo's checksum-verified, pinned model files (#89), never
+          #     untrusted network input. See #99.
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2024-0437
