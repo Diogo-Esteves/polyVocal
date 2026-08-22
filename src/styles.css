@@ -69,6 +69,14 @@
 
   /* One elevation only — sheets and the record button. Flat everywhere else. */
   --shadow-elevated: 0 2px 8px rgb(42 36 32 / 0.1);
+
+  /* `appearance: none` (below, on `select`) drops the native dropdown
+   * chevron along with the disabled-state chrome it was there to suppress —
+   * this repaints it as a background image so selects still read as
+   * dropdowns. Stroke color is baked into the data URI (data URIs can't see
+   * CSS custom properties), so it's redefined per theme like the other
+   * colors above rather than left as one value. */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236b5f52' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 @media (prefers-color-scheme: dark) {
@@ -95,6 +103,8 @@
     --strand-4: #9baf8e;
 
     --shadow-elevated: 0 2px 8px rgb(0 0 0 / 0.4);
+
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23b5a895' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
 }
 
@@ -121,6 +131,8 @@
   --strand-4: #9baf8e;
 
   --shadow-elevated: 0 2px 8px rgb(0 0 0 / 0.4);
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23b5a895' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 :root[data-theme="light"] {
@@ -628,6 +640,7 @@ select:focus-visible {
   background: var(--color-surface);
   font-size: var(--text-sm);
   max-width: 100%;
+  overflow: hidden;
 }
 
 .language-source,
@@ -640,7 +653,7 @@ select:focus-visible {
   min-height: 36px;
   border: none;
   border-radius: var(--radius-full);
-  background: transparent;
+  background-color: transparent;
   font-size: var(--text-sm);
 }
 
@@ -759,10 +772,16 @@ select:focus-visible {
 
 select {
   font: inherit;
-  padding: 0.5rem;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0.5rem 1.75rem 0.5rem 0.5rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background-color: var(--color-surface);
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 10px;
   color: var(--color-text);
 }
 
@@ -924,12 +943,16 @@ select {
 .toggle-segment {
   border: none;
   border-radius: 0;
-  background: transparent;
+  background-color: transparent;
   padding: 0.5rem 1rem;
 }
 
+.toggle-target {
+  padding-right: 1.75rem;
+}
+
 .toggle-segment.is-active {
-  background: var(--color-primary);
+  background-color: var(--color-primary);
   color: var(--color-primary-contrast);
 }
 
