@@ -200,7 +200,7 @@ mod tests {
             .collect();
 
         let mut max_speech_score: f32 = 0.0;
-        for frame in samples.chunks_exact(SILERO_FRAME_SIZE) {
+        for frame in samples.as_chunks::<SILERO_FRAME_SIZE>().0 {
             let score = vad
                 .score(frame)
                 .expect("scoring real speech should not fail");
