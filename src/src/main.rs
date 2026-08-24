@@ -58,6 +58,68 @@ fn stored_theme_mode() -> ThemeMode {
         .unwrap_or(ThemeMode::Auto)
 }
 
+/// Key the record-toggle keyboard shortcut is persisted under in
+/// `localStorage`.
+const RECORD_SHORTCUT_STORAGE_KEY: &str = "polyvocal-record-shortcut";
+
+/// The key that toggles recording (see `App`'s `window_event_listener`).
+/// A local accelerator only — scoped to the app window and only live while
+/// the record screen is showing, not a `tauri-plugin-global-shortcut`
+/// registration (see #125).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecordShortcutKey {
+    Space,
+    R,
+    S,
+}
+
+impl RecordShortcutKey {
+    /// The `KeyboardEvent.code` value to match against — layout-independent,
+    /// unlike `.key()`.
+    fn code(self) -> &'static str {
+        match self {
+            RecordShortcutKey::Space => "Space",
+            RecordShortcutKey::R => "KeyR",
+            RecordShortcutKey::S => "KeyS",
+        }
+    }
+
+    fn storage_value(self) -> &'static str {
+        match self {
+            RecordShortcutKey::Space => "space",
+            RecordShortcutKey::R => "r",
+            RecordShortcutKey::S => "s",
+        }
+    }
+
+    fn from_storage_value(value: &str) -> Self {
+        match value {
+            "r" => RecordShortcutKey::R,
+            "s" => RecordShortcutKey::S,
+            _ => RecordShortcutKey::Space,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            RecordShortcutKey::Space => "Space",
+            RecordShortcutKey::R => "R",
+            RecordShortcutKey::S => "S",
+        }
+    }
+}
+
+/// Reads the persisted record-shortcut key. Falls back to `Space`.
+fn stored_record_shortcut() -> RecordShortcutKey {
+    window()
+        .local_storage()
+        .ok()
+        .flatten()
+        .and_then(|storage| storage.get_item(RECORD_SHORTCUT_STORAGE_KEY).ok().flatten())
+        .map(|value| RecordShortcutKey::from_storage_value(&value))
+        .unwrap_or(RecordShortcutKey::Space)
+}
+
 /// Applies a theme mode to the document and persists it. `Auto` clears the
 /// override entirely so the `prefers-color-scheme` media query in
 /// `styles.css` takes over.
@@ -81,6 +143,13 @@ fn apply_theme_mode(mode: ThemeMode) {
                 let _ = storage.remove_item(THEME_STORAGE_KEY);
             }
         }
+    }
+}
+
+/// Persists the record-toggle shortcut key choice.
+fn apply_record_shortcut(key: RecordShortcutKey) {
+    if let Ok(Some(storage)) = window().local_storage() {
+        let _ = storage.set_item(RECORD_SHORTCUT_STORAGE_KEY, key.storage_value());
     }
 }
 
@@ -148,6 +217,19 @@ mod icons {
     }
 
     #[component]
+    pub fn Trash2() -> impl IntoView {
+        view! {
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                <line x1="10" x2="10" y1="11" y2="17"/>
+                <line x1="14" x2="14" y1="11" y2="17"/>
+            </svg>
+        }
+    }
+
+    #[component]
     pub fn Settings() -> impl IntoView {
         view! {
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -157,7 +239,7 @@ mod icons {
         }
     }
 }
-use icons::{ArrowLeft, History, Languages, MoreHorizontal, Settings, TriangleAlert};
+use icons::{ArrowLeft, History, Languages, MoreHorizontal, Settings, Trash2, TriangleAlert};
 
 /// The PolyVocal mark — the hairbrush, rebuilt as inline SVG so it themes,
 /// stays crisp at any size, and exposes each strand as its own path. Geometry
@@ -645,16 +727,25 @@ fn Sheet(
 /// different shells, never two designs to keep in sync.
 ///
 /// The whole card is the tap target (`../design/DESIGN.md` → *Key Screens ·
-/// History*: "Whole card is the tap target") — export and delete moved into
-/// the opened session's `⋯` menu in #74, so a card has nothing left to do on
-/// tap except open that session's detail sheet via `on_open`.
+/// History*: "Whole card is the tap target") — export moved into the opened
+/// session's `⋯` menu in #74. Delete also got a hover-reveal shortcut
+/// directly on the card in #126 (a `:focus-within`/`:focus-visible`-gated
+/// `.session-card-delete` button, sibling to the card so it isn't nested
+/// inside another `<button>`), since the sheet round-trip was too much
+/// friction for a common destructive action — full delete still lives in
+/// the session detail `⋯` menu too.
 #[component]
 fn SessionList(
     sessions: RwSignal<Vec<Session>>,
     sessions_loading: RwSignal<bool>,
     sessions_expanded: RwSignal<bool>,
     on_open: Callback<(String, web_sys::HtmlElement)>,
+    error_message: RwSignal<Option<String>>,
 ) -> impl IntoView {
+    // Only one card can be in the "confirm delete?" state at a time — mirrors
+    // the session-detail sheet's own `pending_delete` signal.
+    let card_pending_delete = RwSignal::new(None::<String>);
+
     view! {
         {move || {
             if sessions_loading.get() {
@@ -682,18 +773,51 @@ fn SessionList(
                             } else {
                                 String::new()
                             };
+                            let open_id = id.clone();
+                            let delete_id = id.clone();
+                            let is_confirming_id = id.clone();
+                            let label_id = id.clone();
                             view! {
                                 <li class="session-item">
                                     <button
                                         class="session-card"
                                         on:click=move |ev| {
                                             if let Some(target) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok()) {
-                                                on_open.run((id.clone(), target));
+                                                on_open.run((open_id.clone(), target));
                                             }
                                         }
                                     >
                                         <p class="session-preview">{preview}</p>
                                         <p class="session-meta">{language_label}" · "{created_at}{translation_note}</p>
+                                    </button>
+                                    <button
+                                        class="session-card-delete"
+                                        class:is-confirming=move || card_pending_delete.get().as_deref() == Some(is_confirming_id.as_str())
+                                        aria-label=move || if card_pending_delete.get().as_deref() == Some(label_id.as_str()) {
+                                            "Confirm delete session"
+                                        } else {
+                                            "Delete session"
+                                        }
+                                        on:click=move |_| {
+                                            if card_pending_delete.get_untracked().as_deref() == Some(delete_id.as_str()) {
+                                                let id = delete_id.clone();
+                                                card_pending_delete.set(None);
+                                                spawn_local(async move {
+                                                    let args = DeleteSessionArgs { id: &id };
+                                                    match tauri_sys::core::invoke_result::<(), String>("delete_session", args).await {
+                                                        Ok(()) => {
+                                                            sessions.update(|list| list.retain(|s| s.id != id));
+                                                            error_message.set(None);
+                                                        }
+                                                        Err(e) => error_message.set(Some(e)),
+                                                    }
+                                                });
+                                            } else {
+                                                card_pending_delete.set(Some(delete_id.clone()));
+                                            }
+                                        }
+                                    >
+                                        <Trash2/>
                                     </button>
                                 </li>
                             }
@@ -978,6 +1102,9 @@ fn App() -> impl IntoView {
     let theme_mode = RwSignal::new(stored_theme_mode());
     Effect::new(move |_| apply_theme_mode(theme_mode.get()));
 
+    let record_shortcut = RwSignal::new(stored_record_shortcut());
+    Effect::new(move |_| apply_record_shortcut(record_shortcut.get()));
+
     let recording = RwSignal::new(false);
     let busy = RwSignal::new(false);
     let record_state = Memo::new(move |_| RecordState::from_signals(recording.get(), busy.get()));
@@ -1114,7 +1241,7 @@ fn App() -> impl IntoView {
         sessions_loading.set(false);
     });
 
-    let toggle_recording = move |_| {
+    let toggle_recording = move || {
         if busy.get_untracked() {
             return;
         }
@@ -1170,6 +1297,31 @@ fn App() -> impl IntoView {
             busy.set(false);
         });
     };
+
+    // Local record-toggle accelerator (#125) — window-scoped, not a
+    // `tauri-plugin-global-shortcut` registration, so it's only live while
+    // this window is focused. Only fires on the record screen (no sheet
+    // open) so it can't silently start/stop a recording behind Settings,
+    // History, or a session detail sheet. `prevent_default` stops Space
+    // from also scrolling the page or activating whatever control has
+    // focus; `repeat()` is ignored so holding the key down doesn't
+    // rapid-toggle.
+    window_event_listener(leptos::ev::keydown, move |ev| {
+        if ev.repeat() || ev.ctrl_key() || ev.meta_key() || ev.alt_key() || ev.shift_key() {
+            return;
+        }
+        if settings_open.get_untracked()
+            || history_open.get_untracked()
+            || session_detail_id.get_untracked().is_some()
+        {
+            return;
+        }
+        if ev.code() != record_shortcut.get_untracked().code() {
+            return;
+        }
+        ev.prevent_default();
+        toggle_recording();
+    });
 
     let toggle_settings = move |_| {
         let opening = !settings_open.get_untracked();
@@ -1230,6 +1382,7 @@ fn App() -> impl IntoView {
                     sessions_loading=sessions_loading
                     sessions_expanded=sessions_expanded
                     on_open=on_open_session
+                    error_message=error_message
                 />
             </aside>
         <main class="app">
@@ -1445,6 +1598,22 @@ fn App() -> impl IntoView {
                                     <option value="dark">{ThemeMode::Dark.label()}</option>
                                 </select>
                             </div>
+
+                            <div class="settings-row">
+                                <label for="record-shortcut-select">"Record shortcut"</label>
+                                <select
+                                    id="record-shortcut-select"
+                                    aria-label="Record shortcut"
+                                    prop:value=move || record_shortcut.get().storage_value()
+                                    on:change=move |ev| {
+                                        record_shortcut.set(RecordShortcutKey::from_storage_value(&event_target_value(&ev)));
+                                    }
+                                >
+                                    <option value="space">{RecordShortcutKey::Space.label()}</option>
+                                    <option value="r">{RecordShortcutKey::R.label()}</option>
+                                    <option value="s">{RecordShortcutKey::S.label()}</option>
+                                </select>
+                            </div>
                         }.into_any()
                     }
                 }}
@@ -1465,6 +1634,7 @@ fn App() -> impl IntoView {
                     sessions_loading=sessions_loading
                     sessions_expanded=sessions_expanded
                     on_open=on_open_session
+                    error_message=error_message
                 />
             </Sheet>
 
@@ -1563,7 +1733,7 @@ fn App() -> impl IntoView {
                         // the `--pv-amp` seam comment there.
                         class:has-live-level=move || recording.get()
                         style:--pv-amp=move || pv_amp().to_string()
-                        on:click=toggle_recording
+                        on:click=move |_| toggle_recording()
                         disabled=move || busy.get()
                         aria-pressed=move || if recording.get() { "true" } else { "false" }
                         aria-labelledby="record-label"
@@ -1621,6 +1791,18 @@ mod tests {
     fn theme_mode_from_storage_value_falls_back_to_auto() {
         assert!(ThemeMode::from_storage_value("") == ThemeMode::Auto);
         assert!(ThemeMode::from_storage_value("sepia") == ThemeMode::Auto);
+    }
+
+    #[test]
+    fn record_shortcut_key_from_storage_value_recognises_r_and_s() {
+        assert!(RecordShortcutKey::from_storage_value("r") == RecordShortcutKey::R);
+        assert!(RecordShortcutKey::from_storage_value("s") == RecordShortcutKey::S);
+    }
+
+    #[test]
+    fn record_shortcut_key_from_storage_value_falls_back_to_space() {
+        assert!(RecordShortcutKey::from_storage_value("") == RecordShortcutKey::Space);
+        assert!(RecordShortcutKey::from_storage_value("tab") == RecordShortcutKey::Space);
     }
 
     #[test]

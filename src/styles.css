@@ -885,6 +885,57 @@ select {
   font-size: 0.85rem;
 }
 
+/* Hover-reveal delete shortcut on the card itself (#126) — a sibling of
+ * `.session-card`, not nested inside it (buttons can't nest). Hidden until
+ * hovered/focused so it doesn't reintroduce the per-row chrome #74 removed;
+ * `hover: none` (touch, no pointer that can hover) keeps it always visible
+ * there since there's no hover state to reveal it. */
+.session-item {
+  position: relative;
+}
+
+.session-card-delete {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0.4rem;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) ease;
+}
+
+.session-item:hover .session-card-delete,
+.session-item:focus-within .session-card-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .session-card-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-card-delete {
+    transition: none;
+  }
+}
+
+.session-card-delete.is-confirming {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* Expand/collapse affordance under a capped session list — quieter and
    tighter than the primary buttons, since it's navigation, not an action. */
 .sessions-toggle {
