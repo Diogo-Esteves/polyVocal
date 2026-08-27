@@ -194,20 +194,16 @@ mod tests {
         }
     }
 
-    fn temp_models_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_models_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[tokio::test]
     async fn test_download_writes_model_file() {
-        let dir = temp_models_dir("polyvocal_test_download_writes");
-        let dest = dir.join(ModelSize::Tiny.filename());
-        let _ = std::fs::remove_file(&dest); // guarantee a fresh, not-yet-downloaded state
+        let tmp = temp_models_dir();
+        let dest = tmp.path().join(ModelSize::Tiny.filename());
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"fake model bytes");
 
         manager
@@ -221,11 +217,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_skips_if_already_present() {
-        let dir = temp_models_dir("polyvocal_test_download_skips");
-        let dest = dir.join(ModelSize::Tiny.filename());
+        let tmp = temp_models_dir();
+        let dest = tmp.path().join(ModelSize::Tiny.filename());
         std::fs::write(&dest, b"already here").unwrap();
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"should not be written");
 
         manager
@@ -239,11 +235,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_propagates_downloader_error() {
-        let dir = temp_models_dir("polyvocal_test_download_error");
-        let dest = dir.join(ModelSize::Tiny.filename());
-        let _ = std::fs::remove_file(&dest);
+        let tmp = temp_models_dir();
+        let dest = tmp.path().join(ModelSize::Tiny.filename());
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::failure("network unreachable");
 
         let result = manager.download(&ModelSize::Tiny, &downloader).await;
@@ -258,11 +253,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_vad_model_downloads_when_missing() {
-        let dir = temp_models_dir("polyvocal_test_vad_download");
-        let dest = dir.join(VadModel::Silero.filename());
-        let _ = std::fs::remove_file(&dest);
+        let tmp = temp_models_dir();
+        let dest = tmp.path().join(VadModel::Silero.filename());
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"fake onnx bytes");
 
         let path = manager
@@ -277,11 +271,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_vad_model_skips_if_present() {
-        let dir = temp_models_dir("polyvocal_test_vad_skip");
-        let dest = dir.join(VadModel::Silero.filename());
+        let tmp = temp_models_dir();
+        let dest = tmp.path().join(VadModel::Silero.filename());
         std::fs::write(&dest, b"already here").unwrap();
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"should not overwrite");
 
         manager
@@ -295,13 +289,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_translation_model_downloads_all_files() {
-        let dir = temp_models_dir("polyvocal_test_translation_download");
-        let model_dir = dir
+        let tmp = temp_models_dir();
+        let model_dir = tmp
+            .path()
             .join("translation")
             .join(TranslationModel::EnEs.dir_name());
-        let _ = std::fs::remove_dir_all(&model_dir);
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"fake weights");
 
         let path = manager
@@ -321,15 +315,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_translation_model_only_downloads_missing_files() {
-        let dir = temp_models_dir("polyvocal_test_translation_partial");
-        let model_dir = dir
+        let tmp = temp_models_dir();
+        let model_dir = tmp
+            .path()
             .join("translation")
             .join(TranslationModel::EnEs.dir_name());
-        let _ = std::fs::remove_dir_all(&model_dir);
         std::fs::create_dir_all(&model_dir).unwrap();
         std::fs::write(model_dir.join("config.json"), b"already here").unwrap();
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"freshly downloaded");
 
         manager
@@ -350,24 +344,25 @@ mod tests {
 
     #[test]
     fn test_is_translation_model_downloaded_false_when_dir_missing() {
-        let dir = temp_models_dir("polyvocal_test_translation_downloaded_missing");
-        let model_dir = dir
+        let tmp = temp_models_dir();
+        let model_dir = tmp
+            .path()
             .join("translation")
             .join(TranslationModel::EnEs.dir_name());
         let _ = std::fs::remove_dir_all(&model_dir);
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
 
         assert!(!manager.is_translation_model_downloaded(&TranslationModel::EnEs));
     }
 
     #[test]
     fn test_is_translation_model_downloaded_false_when_some_files_missing() {
-        let dir = temp_models_dir("polyvocal_test_translation_downloaded_partial");
-        let model_dir = dir
+        let tmp = temp_models_dir();
+        let model_dir = tmp
+            .path()
             .join("translation")
             .join(TranslationModel::EnEs.dir_name());
-        let _ = std::fs::remove_dir_all(&model_dir);
         std::fs::create_dir_all(&model_dir).unwrap();
         for file in TRANSLATION_MODEL_FILES
             .iter()
@@ -376,24 +371,24 @@ mod tests {
             std::fs::write(model_dir.join(file), b"present").unwrap();
         }
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
 
         assert!(!manager.is_translation_model_downloaded(&TranslationModel::EnEs));
     }
 
     #[test]
     fn test_is_translation_model_downloaded_true_when_all_files_present() {
-        let dir = temp_models_dir("polyvocal_test_translation_downloaded_complete");
-        let model_dir = dir
+        let tmp = temp_models_dir();
+        let model_dir = tmp
+            .path()
             .join("translation")
             .join(TranslationModel::EnEs.dir_name());
-        let _ = std::fs::remove_dir_all(&model_dir);
         std::fs::create_dir_all(&model_dir).unwrap();
         for file in TRANSLATION_MODEL_FILES {
             std::fs::write(model_dir.join(file), b"present").unwrap();
         }
 
-        let manager = ModelManager::new(dir.clone());
+        let manager = ModelManager::new(tmp.path().to_path_buf());
 
         assert!(manager.is_translation_model_downloaded(&TranslationModel::EnEs));
     }
