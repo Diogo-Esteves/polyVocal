@@ -1,6 +1,6 @@
 [package]
 name = "polyvocal"
-version = "0.1.0"
+version = "0.2.0"
 description = "PolyVocal — fast, local, cross-platform speech-to-text with translation"
 authors = ["Diogo Esteves"]
 license = "MIT"
