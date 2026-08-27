@@ -134,17 +134,14 @@ mod tests {
         }
     }
 
-    fn temp_models_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_models_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[tokio::test]
     async fn ensure_default_whisper_model_downloads_and_activates_tiny_when_none_active() {
-        let dir = temp_models_dir("polyvocal_test_ensure_default_whisper_fresh");
-        let manager = ModelManager::new(dir);
+        let tmp = temp_models_dir();
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"fake tiny model");
 
         ensure_default_whisper_model(&manager, &downloader)
@@ -157,8 +154,8 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_default_whisper_model_is_noop_when_a_model_is_already_active() {
-        let dir = temp_models_dir("polyvocal_test_ensure_default_whisper_existing");
-        let manager = ModelManager::new(dir);
+        let tmp = temp_models_dir();
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"fake base model");
 
         // Pre-seed an already-active (non-tiny) model.
@@ -179,8 +176,8 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_default_models_also_provisions_the_vad_model() {
-        let dir = temp_models_dir("polyvocal_test_ensure_default_models_vad");
-        let manager = ModelManager::new(dir);
+        let tmp = temp_models_dir();
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"fake model bytes");
 
         ensure_default_models_with(&manager, &downloader)
@@ -195,8 +192,8 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_default_models_still_provisions_vad_when_whisper_already_active() {
-        let dir = temp_models_dir("polyvocal_test_ensure_default_models_vad_only");
-        let manager = ModelManager::new(dir);
+        let tmp = temp_models_dir();
+        let manager = ModelManager::new(tmp.path().to_path_buf());
         let downloader = FakeDownloader::success(b"fake model bytes");
 
         manager

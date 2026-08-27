@@ -68,4 +68,52 @@ mod tests {
         let result = MarianTokenizer::load(Path::new("/nonexistent/translation/model"));
         assert!(result.is_err());
     }
+
+    /// Exercises real MarianTokenizer encode/decode round-trip end to end —
+    /// downloads the real `Helsinki-NLP/opus-mt-en-es` checkpoint (~300 MB,
+    /// cached across runs under the OS temp dir) and tests tokenization
+    /// against real SentencePiece `source.spm`/`vocab.json` files. Not part
+    /// of the default suite (network + a large download on first run), run
+    /// manually with `--ignored` when touching the tokenizer/model registry
+    /// wiring. The test above covers the error path; this one catches
+    /// regressions in tokenizer loading and encode/decode behavior.
+    #[tokio::test]
+    #[ignore]
+    async fn test_real_marian_tokenizer_round_trip_en_es() {
+        let models_dir = std::env::temp_dir().join("polyvocal_test_real_translation_models");
+        let manager = crate::models::manager::ModelManager::new(models_dir);
+        let model_dir = manager
+            .ensure_translation_model(
+                &crate::models::registry::TranslationModel::EnEs,
+                &crate::models::downloader::ReqwestDownloader,
+            )
+            .await
+            .expect("should download Helsinki-NLP/opus-mt-en-es checkpoint");
+
+        let tokenizer = MarianTokenizer::load(&model_dir)
+            .expect("should load MarianTokenizer from downloaded model");
+
+        let input = "Hello, how are you?";
+        let ids = tokenizer
+            .encode(input)
+            .expect("should encode input string to ids");
+        assert!(!ids.is_empty(), "encoded ids should not be empty");
+
+        let decoded = tokenizer.decode(&ids);
+        assert!(!decoded.is_empty(), "decoded string should not be empty");
+
+        let decoded_lower = decoded.to_lowercase();
+        assert!(
+            decoded_lower.contains("hello") || decoded_lower.contains("hi"),
+            "decoded output should contain recognizable greeting word, got: {decoded}"
+        );
+        assert!(
+            decoded_lower.contains("how") || decoded_lower.contains("are"),
+            "decoded output should contain recognizable question words, got: {decoded}"
+        );
+        assert!(
+            decoded_lower.contains("you"),
+            "decoded output should contain 'you', got: {decoded}"
+        );
+    }
 }
