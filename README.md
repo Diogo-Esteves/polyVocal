@@ -74,6 +74,15 @@ cargo tauri dev
 
 On first launch, PolyVocal downloads the `tiny` Whisper model (~75 MB). Larger models can be selected in Settings.
 
+### Troubleshooting the Linux AppImage
+
+If the AppImage opens a blank window and the terminal shows `Could not
+create default EGL display: EGL_BAD_PARAMETER`, the release AppImage's
+bundled Wayland client libraries aren't found or don't match your
+system's — try the `.deb` package instead (it relies on your system's own
+`libwebkit2gtk`/Wayland libraries via `apt`, which sidesteps the issue) or
+build from source per above.
+
 ---
 
 ## Models

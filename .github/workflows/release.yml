@@ -57,13 +57,48 @@ jobs:
         with:
           version: "latest"
 
-      - name: Build and release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0.0" --locked
+
+      - name: Build app bundles
+        run: cargo tauri build --bundles deb,appimage
+
+      # The AppImage bundler (linuxdeploy) packages its own copies of the
+      # Wayland client libraries into usr/lib, built against a much older
+      # base than most users' systems ship. AppImage's runtime prioritizes
+      # those bundled libs over the host's via LD_LIBRARY_PATH, and on
+      # newer Wayland/Mesa stacks (confirmed on Arch/amdgpu) the version
+      # mismatch makes webkit2gtk's EGL init fail with "Could not create
+      # default EGL display: EGL_BAD_PARAMETER", leaving a blank window
+      # (#136) — even though the same libraries work fine for a native,
+      # non-AppImage build on the same machine. Stripping them out and
+      # repackaging lets the AppImage fall back to the host's own Wayland
+      # libs instead, which is what fixes it.
+      - name: Strip bundled Wayland libs from the AppImage (#136)
+        run: |
+          set -e
+          appimage=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage')
+          workdir=$(mktemp -d)
+          cp "$appimage" "$workdir/app.AppImage"
+          cd "$workdir"
+          chmod +x app.AppImage
+          ./app.AppImage --appimage-extract
+          rm -f squashfs-root/usr/lib/libwayland-egl.so.1 \
+                squashfs-root/usr/lib/libwayland-client.so.0 \
+                squashfs-root/usr/lib/libwayland-server.so.0 \
+                squashfs-root/usr/lib/libwayland-cursor.so.0
+          curl -fL -o appimagetool.AppImage \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool.AppImage
+          ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run squashfs-root "$OLDPWD/$appimage"
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "PolyVocal ${{ github.ref_name }}"
-          releaseDraft: true
+          tag_name: ${{ github.ref_name }}
+          name: "PolyVocal ${{ github.ref_name }}"
+          draft: true
           prerelease: true
-          args: --bundles deb,appimage
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
