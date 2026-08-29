@@ -38,7 +38,10 @@ impl TranscriptionEngine {
             .create_state()
             .map_err(|e| anyhow!("failed to create Whisper state: {e}"))?;
 
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
+        let mut params = FullParams::new(SamplingStrategy::BeamSearch {
+            beam_size: 5,
+            patience: -1.0,
+        });
         params.set_language(None); // auto-detect, per DEC-003
         params.set_print_special(false);
         params.set_print_progress(false);
