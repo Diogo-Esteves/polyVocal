@@ -867,6 +867,7 @@ fn SessionDetailSheet(
     let translating = RwSignal::new(false);
     let menu_open = RwSignal::new(false);
     let pending_delete = RwSignal::new(false);
+    let copied = RwSignal::new(false);
 
     // Refetches only on an actual id change (open with a new/different
     // session), not on every reactive rerun — same edge-detection shape as
@@ -880,6 +881,7 @@ fn SessionDetailSheet(
                 view_mode.set(SessionView::Original);
                 menu_open.set(false);
                 pending_delete.set(false);
+                copied.set(false);
                 target_lang.set(default_target_lang.get_untracked());
                 loading.set(true);
                 spawn_local(async move {
@@ -989,6 +991,40 @@ fn SessionDetailSheet(
         });
     };
 
+    // Copies whichever text the toggle is currently showing — original or
+    // translated — since that's what the user is looking at. Leaves the menu
+    // open through the "Copied!" swap (closing it immediately, as the other
+    // menu actions do, would hide that feedback before it's ever seen) and
+    // closes it itself once the swap times out.
+    let copy_now = move |_| {
+        let Some(session) = detail.get_untracked() else {
+            return;
+        };
+        let text = match view_mode.get_untracked() {
+            SessionView::Original => session.transcript.clone(),
+            SessionView::Translated => session.translation.clone().unwrap_or_default(),
+        };
+        spawn_local(async move {
+            let promise = window().navigator().clipboard().write_text(&text);
+            match wasm_bindgen_futures::JsFuture::from(promise).await {
+                Ok(_) => {
+                    copied.set(true);
+                    set_timeout(
+                        move || {
+                            copied.set(false);
+                            menu_open.set(false);
+                        },
+                        Duration::from_millis(1500),
+                    );
+                }
+                Err(_) => {
+                    menu_open.set(false);
+                    error_message.set(Some("Couldn't copy to clipboard.".to_string()));
+                }
+            }
+        });
+    };
+
     let delete_now = move |_| {
         let Some(id) = session_detail_id.get_untracked() else {
             return;
@@ -1031,6 +1067,9 @@ fn SessionDetailSheet(
                         <MoreHorizontal/>
                     </button>
                     <div class="session-menu" class:is-open=move || menu_open.get()>
+                        <button class="session-menu-item" on:click=copy_now>
+                            {move || if copied.get() { "Copied!" } else { "Copy text" }}
+                        </button>
                         <button class="session-menu-item" on:click=export_txt>"Export TXT"</button>
                         <button class="session-menu-item" on:click=export_srt>"Export SRT"</button>
                         <button
