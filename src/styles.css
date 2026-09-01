@@ -208,7 +208,7 @@ body {
   width: 280px;
   flex-shrink: 0;
   height: 100dvh;
-  padding: var(--space-6) var(--space-4);
+  padding: var(--space-6);
   overflow-y: auto;
   border-right: 1px solid var(--color-hairline);
 }
@@ -321,11 +321,17 @@ body {
   font-weight: 600;
 }
 
+/* Right-only gutter for the scrollbar — `.sheet` already gives every child
+ * (this one included) a var(--space-6) horizontal inset via its own
+ * padding, so matching that on the left here would double it and knock
+ * this out of alignment with `.sheet-header`, which relies on the same
+ * single inset. Only the right edge, where the scrollbar actually paints,
+ * needs the extra room. */
 .sheet-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-4) 0 var(--space-6);
+  padding: var(--space-4) var(--space-4) var(--space-6) 0;
 }
 
 .app-header {
