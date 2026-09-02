@@ -1,4 +1,4 @@
-use crate::audio::capture::AudioCapture;
+use crate::audio::capture::{AudioCapture, CaptureCounters};
 use crate::audio::chunker::FrameChunker;
 use crate::audio::device;
 use crate::audio::state::AudioState;
@@ -6,7 +6,9 @@ use crate::models::manager::ModelManager;
 use crate::models::registry::VadModel;
 use crate::storage::models::TranscriptSegment;
 use crate::storage::repository::SessionRepository;
-use crate::transcription::engine::{TranscriptResult, TranscriptionEngine};
+use crate::transcription::engine::{
+    DecodeOptions, DecodeStrategy, TranscriptResult, TranscriptionEngine,
+};
 use crate::transcription::pipeline::{ClosedSegment, RecordingPipeline};
 use crate::transcription::session::TranscriptionSession;
 use crate::vad::segmenter::SpeechSegmenter;
@@ -14,8 +16,11 @@ use crate::vad::silero::{SileroVad, SILERO_FRAME_SIZE};
 use crate::vad::{VAD_MAX_SEGMENT_FRAMES, VAD_MIN_SILENCE_FRAMES, VAD_THRESHOLD};
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::future::Future;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 
 /// A recording in progress.
@@ -26,7 +31,8 @@ use tokio::task::JoinHandle;
 struct ActiveRecording {
     stop_tx: std::sync::mpsc::Sender<()>,
     capture_thread: std::thread::JoinHandle<()>,
-    task: JoinHandle<TranscriptionSession>,
+    producer_task: JoinHandle<RecordingStats>,
+    worker_task: JoinHandle<TranscriptionSession>,
 }
 
 struct RecordingSlot {
@@ -79,6 +85,77 @@ const LEVEL_EMIT_RATE_HZ: u32 = 20;
 /// chunk.
 const LEVEL_SMOOTHING_ALPHA: f32 = 0.3;
 
+/// Bound on the capture→worker segment queue. At the current ~30s VAD
+/// segment cap each `ClosedSegment` is ~1.9MB, so this only ever holds a
+/// couple of them regardless — a plain bounded `mpsc` channel with
+/// `try_send`-drop-on-full is sufficient at this size; see #144.
+const SEGMENT_QUEUE_CAPACITY: usize = 2;
+
+/// Outcome of a non-blocking attempt to hand a closed segment to the
+/// transcription worker.
+#[derive(Debug)]
+enum EnqueueOutcome {
+    /// Queue was full — the segment was dropped. This is the last-resort
+    /// backstop; the worker degrading to greedy decoding when it's already
+    /// behind (see `worker_loop`) is the primary defense against ever
+    /// reaching this (#144).
+    Dropped,
+    /// The worker's receiver is gone (task ended/panicked) — the queue is
+    /// poisoned; the caller must stop feeding it.
+    WorkerGone,
+}
+
+fn try_enqueue_segment(
+    queue_tx: &mpsc::Sender<ClosedSegment>,
+    segment: ClosedSegment,
+) -> Result<(), EnqueueOutcome> {
+    match queue_tx.try_send(segment) {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(_)) => Err(EnqueueOutcome::Dropped),
+        Err(mpsc::error::TrySendError::Closed(_)) => Err(EnqueueOutcome::WorkerGone),
+    }
+}
+
+/// Drop/backlog counters surfaced once at session end (#144 item 8) — a
+/// single structured `tracing` line, local log only, no telemetry upload
+/// (this app's privacy-first design).
+struct RecordingStats {
+    dropped_capture_chunks: u64,
+    dropped_queue_segments: u64,
+}
+
+/// Abstraction over "transcribe this audio", so the worker loop's own
+/// logic (session accumulation, degrade-before-drop, persistence) can be
+/// unit tested without running real whisper-rs inference. `EngineTranscriber`
+/// (wrapping `Arc<TranscriptionEngine>`) is the production implementation.
+/// `&self`, not `&mut self`: `WhisperContext` is `Send + Sync`, so no borrow
+/// needs to be held across the `spawn_blocking` await, unlike the old
+/// move-in/move-out `transcribe_segment` this replaces.
+trait Transcriber: Send + Sync {
+    fn transcribe(
+        &self,
+        samples: Vec<f32>,
+        options: DecodeOptions,
+    ) -> impl Future<Output = anyhow::Result<TranscriptResult>> + Send;
+}
+
+struct EngineTranscriber {
+    engine: Arc<TranscriptionEngine>,
+}
+
+impl Transcriber for EngineTranscriber {
+    async fn transcribe(
+        &self,
+        samples: Vec<f32>,
+        options: DecodeOptions,
+    ) -> anyhow::Result<TranscriptResult> {
+        let engine = self.engine.clone();
+        tokio::task::spawn_blocking(move || engine.transcribe(&samples, &options))
+            .await
+            .map_err(|e| anyhow::anyhow!("transcription task panicked: {e}"))?
+    }
+}
+
 /// Root-mean-square amplitude of a chunk of mono f32 PCM samples, in `[0, 1]`
 /// for well-formed audio.
 fn rms_level(samples: &[f32]) -> f32 {
@@ -86,6 +163,60 @@ fn rms_level(samples: &[f32]) -> f32 {
         return 0.0;
     }
     (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
+/// Drains `queue_rx`, transcribing each closed segment and handing the
+/// result to `on_segment`, until the producer (the capture-drain loop)
+/// closes the queue — i.e. the recording stopped and every already-queued
+/// segment (including the final flush) has been delivered; see #144's
+/// "drain, don't discard, at shutdown" decision.
+///
+/// Degrades to greedy decoding for a segment when the queue is already
+/// backed up behind it (`queue_rx.len() > 0` right after receiving it) —
+/// ~5x cheaper than beam search, strictly better than losing the segment
+/// to the producer's drop-on-overload backstop. `default_strategy` is what
+/// gets used when *not* behind; today that's always `Greedy` too (matching
+/// the Phase 0 live-capture default — see `start_recording`), but this is
+/// real, exercised infrastructure for whenever a "prefer accuracy" setting
+/// picks `BeamSearch` for the caught-up case (#144 Phase 2, #22).
+async fn worker_loop<T, F, Fut>(
+    mut queue_rx: mpsc::Receiver<ClosedSegment>,
+    transcriber: &T,
+    default_strategy: DecodeStrategy,
+    mut session: TranscriptionSession,
+    mut on_segment: F,
+) -> TranscriptionSession
+where
+    T: Transcriber,
+    F: FnMut(&TranscriptResult, i64, i64) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    while let Some(ClosedSegment {
+        samples,
+        start_ms,
+        end_ms,
+    }) = queue_rx.recv().await
+    {
+        let strategy = if !queue_rx.is_empty() {
+            DecodeStrategy::Greedy
+        } else {
+            default_strategy
+        };
+        let options = DecodeOptions {
+            strategy,
+            ..DecodeOptions::default()
+        };
+
+        match transcriber.transcribe(samples, options).await {
+            Ok(result) => {
+                session.append(&result.text, &result.language);
+                on_segment(&result, start_ms, end_ms).await;
+            }
+            Err(e) => tracing::error!("transcription pipeline error: {e}"),
+        }
+    }
+
+    session
 }
 
 #[tauri::command]
@@ -116,7 +247,7 @@ pub async fn start_recording(
     let whisper_path = manager
         .active_model_path()
         .ok_or_else(|| "No active Whisper model — download one in Settings".to_string())?;
-    let engine = TranscriptionEngine::load(whisper_path).map_err(|e| e.to_string())?;
+    let engine = Arc::new(TranscriptionEngine::load(whisper_path).map_err(|e| e.to_string())?);
 
     // Doesn't auto-download — VAD model must already be fetched via Settings,
     // same as the Whisper model above.
@@ -129,22 +260,23 @@ pub async fn start_recording(
         VAD_MAX_SEGMENT_FRAMES,
     );
     let pipeline = RecordingPipeline::new(segmenter);
-    // `Uuid` is `Copy`, so capturing it below (for the emitted events) doesn't
-    // consume this — it's also used after the task finishes to give the
-    // persisted session the same id the frontend saw in live events.
-    let transcription_session_id = pipeline.session().id;
+    // `Uuid` is `Copy` — captured below for the emitted events and to seed the
+    // worker's `TranscriptionSession` with the same id the frontend already
+    // saw, and again after both tasks finish to persist under it.
+    let transcription_session_id = uuid::Uuid::new_v4();
 
     // Build and own the (non-Send) capture stream entirely on a dedicated
     // OS thread; only the frame receiver crosses back to async code.
-    let (setup_tx, setup_rx) =
-        tokio::sync::oneshot::channel::<Result<tokio::sync::mpsc::Receiver<Vec<f32>>, String>>();
+    let (setup_tx, setup_rx) = tokio::sync::oneshot::channel::<
+        Result<(tokio::sync::mpsc::Receiver<Vec<f32>>, CaptureCounters), String>,
+    >();
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     let device_for_thread = device_id.clone();
 
     let capture_thread = std::thread::spawn(move || {
         match AudioCapture::start_blocking(device_for_thread) {
             Ok((capture, rx)) => {
-                if setup_tx.send(Ok(rx)).is_err() {
+                if setup_tx.send(Ok((rx, capture.counters()))).is_err() {
                     return; // start_recording gave up before we could start
                 }
                 let _ = stop_rx.recv(); // block this thread until told to stop
@@ -156,7 +288,7 @@ pub async fn start_recording(
         }
     });
 
-    let rx = setup_rx
+    let (rx, capture_counters) = setup_rx
         .await
         .map_err(|_| "audio capture thread died before starting".to_string())??;
 
@@ -170,103 +302,122 @@ pub async fn start_recording(
     begin_session_row(pool.inner(), &session_id, &stop_tx).await?;
     let repository = SessionRepository::new(pool.inner().clone());
 
-    let task = tokio::spawn(async move {
-        let mut pipeline = pipeline;
-        let mut engine = engine;
-        let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
-        let mut rx = rx;
+    let (queue_tx, queue_rx) = mpsc::channel::<ClosedSegment>(SEGMENT_QUEUE_CAPACITY);
 
-        // Live level meter (#76): computed from the resampled chunk this
-        // task already dequeued for VAD/transcription — no second consumer
-        // of the capture channel, and no work added to the capture callback
-        // itself (see #45 on why that path stays untouched).
-        let mut smoothed_level = 0.0_f32;
-        let level_emit_interval =
-            std::time::Duration::from_secs_f64(1.0 / LEVEL_EMIT_RATE_HZ as f64);
-        let mut last_level_emit = std::time::Instant::now() - level_emit_interval;
+    let producer_task: JoinHandle<RecordingStats> = tokio::spawn({
+        let app = app.clone();
+        async move {
+            let mut pipeline = pipeline;
+            let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
+            let mut rx = rx;
+            let mut queue_drops: u64 = 0;
+            let mut last_dropped_samples_seen: u64 = 0;
 
-        while let Some(chunk) = rx.recv().await {
-            smoothed_level += LEVEL_SMOOTHING_ALPHA * (rms_level(&chunk) - smoothed_level);
-            if last_level_emit.elapsed() >= level_emit_interval {
-                last_level_emit = std::time::Instant::now();
-                if let Err(e) = app.emit(
-                    "audio:level",
-                    &AudioLevelEvent {
-                        level: smoothed_level,
-                    },
-                ) {
-                    tracing::error!("failed to emit audio:level: {e}");
+            let mut smoothed_level = 0.0_f32;
+            let level_emit_interval =
+                std::time::Duration::from_secs_f64(1.0 / LEVEL_EMIT_RATE_HZ as f64);
+            let mut last_level_emit = std::time::Instant::now() - level_emit_interval;
+
+            'drain: while let Some(chunk) = rx.recv().await {
+                let dropped_samples_now = capture_counters.dropped_samples.load(Ordering::Relaxed);
+                let delta = dropped_samples_now.saturating_sub(last_dropped_samples_seen);
+                if delta > 0 {
+                    pipeline.account_for_dropped_samples(delta as usize);
+                    last_dropped_samples_seen = dropped_samples_now;
+                }
+
+                smoothed_level += LEVEL_SMOOTHING_ALPHA * (rms_level(&chunk) - smoothed_level);
+                if last_level_emit.elapsed() >= level_emit_interval {
+                    last_level_emit = std::time::Instant::now();
+                    if let Err(e) = app.emit(
+                        "audio:level",
+                        &AudioLevelEvent {
+                            level: smoothed_level,
+                        },
+                    ) {
+                        tracing::error!("failed to emit audio:level: {e}");
+                    }
+                }
+
+                for frame in chunker.push(&chunk) {
+                    match pipeline.push_frame(&frame) {
+                        Ok(Some(segment)) => match try_enqueue_segment(&queue_tx, segment) {
+                            Ok(()) => {}
+                            Err(EnqueueOutcome::Dropped) => {
+                                queue_drops += 1;
+                                tracing::warn!(
+                                    "transcription worker behind — dropped a closed segment"
+                                );
+                            }
+                            Err(EnqueueOutcome::WorkerGone) => {
+                                tracing::error!(
+                                    "transcription worker task ended — ending recording early"
+                                );
+                                break 'drain;
+                            }
+                        },
+                        Ok(None) => {}
+                        Err(e) => tracing::error!("transcription pipeline error: {e}"),
+                    }
                 }
             }
 
-            for frame in chunker.push(&chunk) {
-                match pipeline.push_frame(&frame) {
-                    Ok(Some(ClosedSegment {
-                        samples,
-                        start_ms,
-                        end_ms,
-                    })) => {
-                        let Some((returned_engine, transcribe_result)) =
-                            transcribe_segment(engine, samples).await
-                        else {
-                            tracing::error!("transcription task panicked — ending recording early");
-                            return pipeline.finish();
-                        };
-                        engine = returned_engine;
-                        match transcribe_result {
-                            Ok(result) => {
-                                pipeline.record_transcript(&result.text, &result.language);
-                                persist_and_emit_segment(
-                                    &app,
-                                    &repository,
-                                    &session_id,
-                                    &result,
-                                    start_ms,
-                                    end_ms,
-                                )
-                                .await;
-                            }
-                            Err(e) => tracing::error!("transcription pipeline error: {e}"),
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => tracing::error!("transcription pipeline error: {e}"),
+            // The capture stream stopped (or the worker died) — recording is
+            // ending. If the worker's still alive, flush whatever's left so it
+            // isn't silently dropped, and deliver it with a blocking send (not
+            // try_send): stop() must reliably hand off the final segment even
+            // if the queue happens to be momentarily full (#144's "drain, don't
+            // discard, at shutdown" decision — see `worker_loop` for the
+            // matching "keep draining until the queue closes" half of it).
+            let dropped_samples_now = capture_counters.dropped_samples.load(Ordering::Relaxed);
+            let delta = dropped_samples_now.saturating_sub(last_dropped_samples_seen);
+            if delta > 0 {
+                pipeline.account_for_dropped_samples(delta as usize);
+            }
+            if let Some(segment) = pipeline.flush() {
+                if queue_tx.send(segment).await.is_err() {
+                    tracing::error!(
+                        "transcription worker task ended before the final segment could be delivered"
+                    );
                 }
+            }
+
+            // Dropping `queue_tx` here (end of scope) closes the queue, which is
+            // `worker_loop`'s signal to stop draining and return.
+            RecordingStats {
+                dropped_capture_chunks: capture_counters.dropped_frames.load(Ordering::Relaxed),
+                dropped_queue_segments: queue_drops,
             }
         }
+    });
 
-        // The capture stream stopped — recording was told to stop, likely
-        // right after the last word, before the usual trailing-silence
-        // hangover had a chance to close the segment naturally. Flush
-        // whatever's left so it isn't silently dropped (see
-        // RecordingPipeline::flush).
-        if let Some(ClosedSegment {
-            samples,
-            start_ms,
-            end_ms,
-        }) = pipeline.flush()
-        {
-            match transcribe_segment(engine, samples).await {
-                Some((_, Ok(result))) => {
-                    pipeline.record_transcript(&result.text, &result.language);
+    let worker_task: JoinHandle<TranscriptionSession> = tokio::spawn({
+        let app = app.clone();
+        let repository = repository.clone();
+        let session_id = session_id.clone();
+        let session = TranscriptionSession::with_id(transcription_session_id);
+        let transcriber = EngineTranscriber {
+            engine: engine.clone(),
+        };
+        async move {
+            worker_loop(
+                queue_rx,
+                &transcriber,
+                DecodeStrategy::Greedy,
+                session,
+                |result, start_ms, end_ms| {
                     persist_and_emit_segment(
                         &app,
                         &repository,
                         &session_id,
-                        &result,
+                        result.clone(),
                         start_ms,
                         end_ms,
                     )
-                    .await;
-                }
-                Some((_, Err(e))) => {
-                    tracing::error!("transcription pipeline error on flush: {e}")
-                }
-                None => tracing::error!("transcription task panicked during flush"),
-            }
+                },
+            )
+            .await
         }
-
-        pipeline.finish()
     });
 
     let device_label = device_id.unwrap_or_else(|| "default".to_string());
@@ -274,7 +425,8 @@ pub async fn start_recording(
     slot.active = Some(ActiveRecording {
         stop_tx,
         capture_thread,
-        task,
+        producer_task,
+        worker_task,
     });
 
     Ok(())
@@ -315,7 +467,7 @@ async fn persist_and_emit_segment(
     app: &AppHandle,
     repository: &SessionRepository,
     session_id: &str,
-    result: &TranscriptResult,
+    result: TranscriptResult,
     start_ms: i64,
     end_ms: i64,
 ) {
@@ -333,8 +485,8 @@ async fn persist_and_emit_segment(
 
     let payload = TranscriptSegmentEvent {
         session_id: session_id.to_string(),
-        text: result.text.clone(),
-        language: result.language.clone(),
+        text: result.text,
+        language: result.language,
         start_ms,
         end_ms,
     };
@@ -358,7 +510,8 @@ pub async fn stop_recording(
     let ActiveRecording {
         stop_tx,
         capture_thread,
-        task,
+        producer_task,
+        worker_task,
     } = slot
         .active
         .take()
@@ -371,7 +524,15 @@ pub async fn stop_recording(
     // error) — captured here rather than `?`-propagated directly, so a
     // failure can't skip the state reset below and leave the state
     // machine stuck in `Stopping` forever (issue #46).
-    let result = finish_recording(stop_tx, capture_thread, task, started_at, pool.inner()).await;
+    let result = finish_recording(
+        stop_tx,
+        capture_thread,
+        producer_task,
+        worker_task,
+        started_at,
+        pool.inner(),
+    )
+    .await;
 
     // The capture thread is joined and the transcription task awaited by
     // this point either way — recording really is over, regardless of
@@ -393,7 +554,8 @@ pub async fn stop_recording(
 async fn finish_recording(
     stop_tx: std::sync::mpsc::Sender<()>,
     capture_thread: std::thread::JoinHandle<()>,
-    task: JoinHandle<TranscriptionSession>,
+    producer_task: JoinHandle<RecordingStats>,
+    worker_task: JoinHandle<TranscriptionSession>,
     started_at: Option<chrono::DateTime<chrono::Utc>>,
     pool: &SqlitePool,
 ) -> Result<String, String> {
@@ -405,7 +567,17 @@ async fn finish_recording(
         .map_err(|e| e.to_string())?
         .map_err(|_| "audio capture thread panicked".to_string())?;
 
-    let session = task.await.map_err(|e| e.to_string())?;
+    // Join order matters: the producer must finish (and drop its queue
+    // sender) before the worker's queue-drain loop can end naturally — see
+    // `worker_loop`.
+    let stats = producer_task.await.map_err(|e| e.to_string())?;
+    let session = worker_task.await.map_err(|e| e.to_string())?;
+
+    tracing::info!(
+        dropped_capture_chunks = stats.dropped_capture_chunks,
+        dropped_queue_segments = stats.dropped_queue_segments,
+        "recording session ended"
+    );
 
     let duration_ms = started_at
         .map(|t| (chrono::Utc::now() - t).num_milliseconds())
@@ -427,36 +599,6 @@ async fn finish_recording(
         .map_err(|e| e.to_string())?;
 
     Ok(id)
-}
-
-/// Transcribes off the async executor (DEC-006) — Whisper inference is
-/// CPU-bound and can take real time; running it inline on the task that
-/// also drains the capture channel would block that drain for the
-/// duration, and the channel (64-frame capacity, ~1s of headroom) would
-/// silently drop audio while blocked (issue #45).
-///
-/// Takes and returns ownership of `engine` across the `spawn_blocking`
-/// boundary — round-tripped per segment rather than held for the whole
-/// recording — since `spawn_blocking` requires a `'static` closure and
-/// `TranscriptionEngine` can't be shared by reference across it without
-/// wrapping in `Arc`.
-///
-/// Returns `None` only if the blocking task itself panicked, which loses
-/// the engine — an unrecoverable state the caller handles by ending the
-/// recording early.
-async fn transcribe_segment(
-    engine: TranscriptionEngine,
-    samples: Vec<f32>,
-) -> Option<(
-    TranscriptionEngine,
-    Result<crate::transcription::engine::TranscriptResult, String>,
-)> {
-    tokio::task::spawn_blocking(move || {
-        let result = engine.transcribe(&samples).map_err(|e| e.to_string());
-        (engine, result)
-    })
-    .await
-    .ok()
 }
 
 #[cfg(test)]
@@ -514,9 +656,24 @@ mod tests {
         let mut session = TranscriptionSession::new();
         session.append("hello world", "en");
         let expected_id = session.id.to_string();
-        let task = tokio::spawn(async move { session });
 
-        let result = finish_recording(stop_tx, finished_capture_thread(), task, None, &pool).await;
+        let producer_task = tokio::spawn(async {
+            RecordingStats {
+                dropped_capture_chunks: 0,
+                dropped_queue_segments: 0,
+            }
+        });
+        let worker_task = tokio::spawn(async move { session });
+
+        let result = finish_recording(
+            stop_tx,
+            finished_capture_thread(),
+            producer_task,
+            worker_task,
+            None,
+            &pool,
+        )
+        .await;
 
         let id = result.expect("should succeed");
         assert_eq!(id, expected_id);
@@ -560,12 +717,19 @@ mod tests {
             .await
             .expect("segment should persist");
 
-        let task = tokio::spawn(async move { session });
+        let producer_task = tokio::spawn(async {
+            RecordingStats {
+                dropped_capture_chunks: 0,
+                dropped_queue_segments: 0,
+            }
+        });
+        let worker_task = tokio::spawn(async move { session });
         let started_at = chrono::Utc::now() - chrono::Duration::milliseconds(1_000);
         finish_recording(
             stop_tx,
             finished_capture_thread(),
-            task,
+            producer_task,
+            worker_task,
             Some(started_at),
             &pool,
         )
@@ -638,9 +802,23 @@ mod tests {
         let (stop_tx, _stop_rx) = std::sync::mpsc::channel::<()>();
 
         let panicked_thread = std::thread::spawn(|| panic!("simulated capture thread panic"));
-        let task = tokio::spawn(async { TranscriptionSession::new() });
+        let producer_task = tokio::spawn(async {
+            RecordingStats {
+                dropped_capture_chunks: 0,
+                dropped_queue_segments: 0,
+            }
+        });
+        let worker_task = tokio::spawn(async { TranscriptionSession::new() });
 
-        let result = finish_recording(stop_tx, panicked_thread, task, None, &pool).await;
+        let result = finish_recording(
+            stop_tx,
+            panicked_thread,
+            producer_task,
+            worker_task,
+            None,
+            &pool,
+        )
+        .await;
 
         let err = result.expect_err("a panicked capture thread should surface as an error");
         assert!(err.contains("panicked"));
@@ -649,15 +827,203 @@ mod tests {
     /// Regression test for issue #46: a panicked transcription task must
     /// surface as an `Err` too, for the same reason.
     #[tokio::test]
-    async fn finish_recording_returns_err_when_transcription_task_panics() {
+    async fn finish_recording_returns_err_when_worker_task_panics() {
         let pool = test_pool().await;
         let (stop_tx, _stop_rx) = std::sync::mpsc::channel::<()>();
 
-        let task: JoinHandle<TranscriptionSession> =
-            tokio::spawn(async { panic!("simulated transcription task panic") });
+        let producer_task = tokio::spawn(async {
+            RecordingStats {
+                dropped_capture_chunks: 0,
+                dropped_queue_segments: 0,
+            }
+        });
+        let worker_task: JoinHandle<TranscriptionSession> =
+            tokio::spawn(async { panic!("simulated worker task panic") });
 
-        let result = finish_recording(stop_tx, finished_capture_thread(), task, None, &pool).await;
+        let result = finish_recording(
+            stop_tx,
+            finished_capture_thread(),
+            producer_task,
+            worker_task,
+            None,
+            &pool,
+        )
+        .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn finish_recording_returns_err_when_producer_task_panics() {
+        let pool = test_pool().await;
+        let (stop_tx, _stop_rx) = std::sync::mpsc::channel::<()>();
+
+        let producer_task: JoinHandle<RecordingStats> =
+            tokio::spawn(async { panic!("simulated producer task panic") });
+        let worker_task = tokio::spawn(async { TranscriptionSession::new() });
+
+        let result = finish_recording(
+            stop_tx,
+            finished_capture_thread(),
+            producer_task,
+            worker_task,
+            None,
+            &pool,
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    /// Records the `DecodeStrategy` it was called with (so tests can assert
+    /// degrade-before-drop actually happened) and returns a scripted result
+    /// after an optional artificial delay (so overflow scenarios can be
+    /// constructed deterministically).
+    struct FakeTranscriber {
+        strategies_seen: std::sync::Mutex<Vec<DecodeStrategy>>,
+        delay: std::time::Duration,
+    }
+
+    impl FakeTranscriber {
+        fn new(delay: std::time::Duration) -> Self {
+            Self {
+                strategies_seen: std::sync::Mutex::new(Vec::new()),
+                delay,
+            }
+        }
+    }
+
+    impl Transcriber for FakeTranscriber {
+        async fn transcribe(
+            &self,
+            samples: Vec<f32>,
+            options: DecodeOptions,
+        ) -> anyhow::Result<TranscriptResult> {
+            self.strategies_seen.lock().unwrap().push(options.strategy);
+            if !self.delay.is_zero() {
+                tokio::time::sleep(self.delay).await;
+            }
+            Ok(TranscriptResult {
+                text: format!("{} samples", samples.len()),
+                language: "en".to_string(),
+                segments: Vec::new(),
+            })
+        }
+    }
+
+    fn closed_segment(len: usize, start_ms: i64) -> ClosedSegment {
+        ClosedSegment {
+            samples: vec![0.0f32; len],
+            start_ms,
+            end_ms: start_ms + len as i64,
+        }
+    }
+
+    #[test]
+    fn try_enqueue_segment_succeeds_while_the_queue_has_room() {
+        let (tx, _rx) = mpsc::channel(2);
+        assert!(try_enqueue_segment(&tx, closed_segment(4, 0)).is_ok());
+    }
+
+    #[test]
+    fn try_enqueue_segment_drops_when_the_queue_is_full() {
+        let (tx, _rx) = mpsc::channel(2);
+        try_enqueue_segment(&tx, closed_segment(4, 0)).unwrap();
+        try_enqueue_segment(&tx, closed_segment(4, 100)).unwrap();
+
+        let result = try_enqueue_segment(&tx, closed_segment(4, 200));
+
+        assert!(matches!(result, Err(EnqueueOutcome::Dropped)));
+    }
+
+    #[test]
+    fn try_enqueue_segment_reports_worker_gone_once_the_receiver_is_dropped() {
+        let (tx, rx) = mpsc::channel(2);
+        drop(rx);
+
+        let result = try_enqueue_segment(&tx, closed_segment(4, 0));
+
+        assert!(matches!(result, Err(EnqueueOutcome::WorkerGone)));
+    }
+
+    #[tokio::test]
+    async fn worker_loop_transcribes_every_queued_segment_and_accumulates_the_session() {
+        let (tx, rx) = mpsc::channel(4);
+        tx.send(closed_segment(4, 0)).await.unwrap();
+        tx.send(closed_segment(4, 100)).await.unwrap();
+        drop(tx); // closes the queue so worker_loop returns
+
+        let transcriber = FakeTranscriber::new(std::time::Duration::ZERO);
+        let mut emitted = Vec::new();
+        let session = worker_loop(
+            rx,
+            &transcriber,
+            DecodeStrategy::Greedy,
+            TranscriptionSession::new(),
+            |result, start_ms, end_ms| {
+                emitted.push((result.text.clone(), start_ms, end_ms));
+                async {}
+            },
+        )
+        .await;
+
+        assert_eq!(emitted.len(), 2);
+        assert!(session.transcript.contains("4 samples"));
+    }
+
+    #[tokio::test]
+    async fn worker_loop_degrades_to_greedy_when_already_behind_but_not_otherwise() {
+        let (tx, rx) = mpsc::channel(4);
+        // Two segments queued up front, so when the worker picks up the first
+        // one, the second is still waiting behind it (queue_rx.len() > 0).
+        tx.send(closed_segment(4, 0)).await.unwrap();
+        tx.send(closed_segment(4, 100)).await.unwrap();
+        drop(tx);
+
+        let transcriber = FakeTranscriber::new(std::time::Duration::ZERO);
+        worker_loop(
+            rx,
+            &transcriber,
+            DecodeStrategy::BeamSearch { beam_size: 5 },
+            TranscriptionSession::new(),
+            |_, _, _| async {},
+        )
+        .await;
+
+        let strategies = transcriber.strategies_seen.lock().unwrap().clone();
+        assert_eq!(strategies.len(), 2);
+        // Behind when picked up (one more still queued) -> degraded to greedy.
+        assert_eq!(strategies[0], DecodeStrategy::Greedy);
+        // Caught up (nothing left queued) -> the configured default strategy.
+        assert_eq!(strategies[1], DecodeStrategy::BeamSearch { beam_size: 5 });
+    }
+
+    #[tokio::test]
+    async fn worker_loop_producer_can_keep_enqueueing_without_waiting_for_the_worker() {
+        // The whole point of decoupling: a slow worker must not block the
+        // producer from continuing to hand off segments (up to queue capacity).
+        let (tx, rx) = mpsc::channel(SEGMENT_QUEUE_CAPACITY);
+        let transcriber = FakeTranscriber::new(std::time::Duration::from_millis(50));
+
+        let worker = tokio::spawn(async move {
+            worker_loop(
+                rx,
+                &transcriber,
+                DecodeStrategy::Greedy,
+                TranscriptionSession::new(),
+                |_, _, _| async {},
+            )
+            .await
+        });
+
+        // Fill the queue without ever needing to await the worker draining it.
+        for i in 0..SEGMENT_QUEUE_CAPACITY {
+            try_enqueue_segment(&tx, closed_segment(4, i as i64 * 100))
+                .expect("queue should have room up to its capacity");
+        }
+        drop(tx);
+
+        let session = worker.await.unwrap();
+        assert!(session.transcript.contains("4 samples"));
     }
 }

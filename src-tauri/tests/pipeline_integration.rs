@@ -13,8 +13,9 @@ use polyvocal_lib::audio::chunker::FrameChunker;
 use polyvocal_lib::models::downloader::ReqwestDownloader;
 use polyvocal_lib::models::manager::ModelManager;
 use polyvocal_lib::models::registry::{ModelSize, VadModel};
-use polyvocal_lib::transcription::engine::TranscriptionEngine;
+use polyvocal_lib::transcription::engine::{DecodeOptions, TranscriptionEngine};
 use polyvocal_lib::transcription::pipeline::RecordingPipeline;
+use polyvocal_lib::transcription::session::TranscriptionSession;
 use polyvocal_lib::vad::segmenter::SpeechSegmenter;
 use polyvocal_lib::vad::silero::{SileroVad, SILERO_FRAME_SIZE};
 // The production defaults, imported rather than redeclared, so this test
@@ -56,6 +57,7 @@ async fn test_jfk_fixture_transcribes_recognizable_speech() {
         VAD_MAX_SEGMENT_FRAMES,
     );
     let mut pipeline = RecordingPipeline::new(segmenter);
+    let mut session = TranscriptionSession::new();
 
     // The pipeline no longer transcribes internally (issue #45) — it hands
     // back closed segments and the caller drives the engine. In the app
@@ -69,14 +71,12 @@ async fn test_jfk_fixture_transcribes_recognizable_speech() {
                 .expect("pipeline should process real speech audio");
             if let Some(segment) = closed {
                 let result = engine
-                    .transcribe(&segment.samples)
+                    .transcribe(&segment.samples, &DecodeOptions::default())
                     .expect("real speech segment should transcribe");
-                pipeline.record_transcript(&result.text, &result.language);
+                session.append(&result.text, &result.language);
             }
         }
     }
-
-    let session = pipeline.finish();
     let transcript = session.transcript.to_lowercase();
 
     // Checked as separate distinctive phrases rather than one long exact

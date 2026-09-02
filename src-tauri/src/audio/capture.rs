@@ -6,6 +6,20 @@ use tokio::sync::mpsc;
 
 use super::resampler::AudioResampler;
 
+/// Cheap `Send` clones of `AudioCapture`'s counters, handed to the async
+/// consumer task across the setup channel — `AudioCapture` itself must
+/// stay on its dedicated capture thread (its `cpal::Stream` is `!Send`).
+#[derive(Clone)]
+pub struct CaptureCounters {
+    /// Number of chunks dropped because the capture channel was full.
+    pub dropped_frames: Arc<AtomicU64>,
+    /// Number of individual samples dropped (i.e. summed length of every
+    /// dropped chunk) — used to keep `RecordingPipeline`'s sample clock
+    /// from drifting ahead of wall clock when chunks are silently dropped
+    /// (see #144).
+    pub dropped_samples: Arc<AtomicU64>,
+}
+
 /// Convert i16 samples to f32.
 fn i16_to_f32(samples: &[i16]) -> Vec<f32> {
     samples.iter().map(|&s| s as f32 / 32768.0).collect()
@@ -39,6 +53,7 @@ fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
 pub struct AudioCapture {
     _stream: cpal::Stream,
     dropped_frames: Arc<AtomicU64>,
+    dropped_samples: Arc<AtomicU64>,
 }
 
 impl AudioCapture {
@@ -77,6 +92,7 @@ impl AudioCapture {
         let channels = config.channels() as usize;
 
         let dropped_frames = Arc::new(AtomicU64::new(0));
+        let dropped_samples = Arc::new(AtomicU64::new(0));
 
         // Create resampler for this device's input rate. Always mono (1),
         // regardless of the device's actual channel count — the capture
@@ -95,6 +111,7 @@ impl AudioCapture {
                 resampler.clone(),
                 channels,
                 dropped_frames.clone(),
+                dropped_samples.clone(),
             )?,
             cpal::SampleFormat::I16 => Self::build_i16_stream(
                 &device,
@@ -103,6 +120,7 @@ impl AudioCapture {
                 resampler.clone(),
                 channels,
                 dropped_frames.clone(),
+                dropped_samples.clone(),
             )?,
             cpal::SampleFormat::U16 => Self::build_u16_stream(
                 &device,
@@ -111,6 +129,7 @@ impl AudioCapture {
                 resampler.clone(),
                 channels,
                 dropped_frames.clone(),
+                dropped_samples.clone(),
             )?,
             _ => {
                 return Err(anyhow!(
@@ -125,7 +144,8 @@ impl AudioCapture {
         Ok((
             Self {
                 _stream: stream,
-                dropped_frames,
+                dropped_frames: dropped_frames.clone(),
+                dropped_samples: dropped_samples.clone(),
             },
             rx,
         ))
@@ -139,6 +159,15 @@ impl AudioCapture {
         self.dropped_frames.load(Ordering::Relaxed)
     }
 
+    /// A `Send` clone of both drop counters, for handing to the async
+    /// consumer task (see `CaptureCounters`).
+    pub fn counters(&self) -> CaptureCounters {
+        CaptureCounters {
+            dropped_frames: self.dropped_frames.clone(),
+            dropped_samples: self.dropped_samples.clone(),
+        }
+    }
+
     fn build_f32_stream(
         device: &cpal::Device,
         config: &cpal::SupportedStreamConfig,
@@ -146,6 +175,7 @@ impl AudioCapture {
         resampler: Arc<Mutex<AudioResampler>>,
         channels: usize,
         dropped_frames: Arc<AtomicU64>,
+        dropped_samples: Arc<AtomicU64>,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
@@ -155,11 +185,15 @@ impl AudioCapture {
                 match resampler.lock() {
                     Ok(mut resampler) => match resampler.resample(&mono) {
                         Ok(resampled) => {
-                            if !resampled.is_empty() && tx.try_send(resampled).is_err() {
-                                dropped_frames.fetch_add(1, Ordering::Relaxed);
-                                tracing::warn!(
-                                    "audio capture channel full — dropped a resampled chunk"
-                                );
+                            if !resampled.is_empty() {
+                                let len = resampled.len();
+                                if tx.try_send(resampled).is_err() {
+                                    dropped_frames.fetch_add(1, Ordering::Relaxed);
+                                    dropped_samples.fetch_add(len as u64, Ordering::Relaxed);
+                                    tracing::warn!(
+                                        "audio capture channel full — dropped a resampled chunk ({len} samples)"
+                                    );
+                                }
                             }
                         }
                         Err(e) => tracing::error!("failed to resample audio frame: {e}"),
@@ -180,6 +214,7 @@ impl AudioCapture {
         resampler: Arc<Mutex<AudioResampler>>,
         channels: usize,
         dropped_frames: Arc<AtomicU64>,
+        dropped_samples: Arc<AtomicU64>,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
@@ -190,11 +225,15 @@ impl AudioCapture {
                 match resampler.lock() {
                     Ok(mut resampler) => match resampler.resample(&mono) {
                         Ok(resampled) => {
-                            if !resampled.is_empty() && tx.try_send(resampled).is_err() {
-                                dropped_frames.fetch_add(1, Ordering::Relaxed);
-                                tracing::warn!(
-                                    "audio capture channel full — dropped a resampled chunk"
-                                );
+                            if !resampled.is_empty() {
+                                let len = resampled.len();
+                                if tx.try_send(resampled).is_err() {
+                                    dropped_frames.fetch_add(1, Ordering::Relaxed);
+                                    dropped_samples.fetch_add(len as u64, Ordering::Relaxed);
+                                    tracing::warn!(
+                                        "audio capture channel full — dropped a resampled chunk ({len} samples)"
+                                    );
+                                }
                             }
                         }
                         Err(e) => tracing::error!("failed to resample audio frame: {e}"),
@@ -215,6 +254,7 @@ impl AudioCapture {
         resampler: Arc<Mutex<AudioResampler>>,
         channels: usize,
         dropped_frames: Arc<AtomicU64>,
+        dropped_samples: Arc<AtomicU64>,
     ) -> Result<cpal::Stream> {
         let stream_config: cpal::StreamConfig = config.config();
         let stream = device.build_input_stream(
@@ -225,11 +265,15 @@ impl AudioCapture {
                 match resampler.lock() {
                     Ok(mut resampler) => match resampler.resample(&mono) {
                         Ok(resampled) => {
-                            if !resampled.is_empty() && tx.try_send(resampled).is_err() {
-                                dropped_frames.fetch_add(1, Ordering::Relaxed);
-                                tracing::warn!(
-                                    "audio capture channel full — dropped a resampled chunk"
-                                );
+                            if !resampled.is_empty() {
+                                let len = resampled.len();
+                                if tx.try_send(resampled).is_err() {
+                                    dropped_frames.fetch_add(1, Ordering::Relaxed);
+                                    dropped_samples.fetch_add(len as u64, Ordering::Relaxed);
+                                    tracing::warn!(
+                                        "audio capture channel full — dropped a resampled chunk ({len} samples)"
+                                    );
+                                }
                             }
                         }
                         Err(e) => tracing::error!("failed to resample audio frame: {e}"),

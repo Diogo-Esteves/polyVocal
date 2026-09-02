@@ -11,8 +11,12 @@ pub struct TranscriptionSession {
 
 impl TranscriptionSession {
     pub fn new() -> Self {
+        Self::with_id(Uuid::new_v4())
+    }
+
+    pub fn with_id(id: Uuid) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id,
             started_at: Utc::now(),
             transcript: String::new(),
             detected_language: None,
