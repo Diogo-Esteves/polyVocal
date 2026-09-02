@@ -51,6 +51,10 @@ rubato = "0.15"
 # NOTE: requires whisper.cpp to be built; see build.rs
 whisper-rs = "0.16"
 
+# WAV decoding — used to decode the embedded calibration audio fixture at
+# runtime (transcription::calibration) as well as in tests.
+hound = "3.5.1"
+
 # Storage — async SQLite
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono"] }
 
@@ -116,5 +120,4 @@ rust_tokenizers = "8"
 tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
-hound = "3.5.1"
 tempfile = "3"

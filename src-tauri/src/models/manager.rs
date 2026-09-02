@@ -4,6 +4,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tracing::info;
 
+#[derive(Clone)]
 pub struct ModelManager {
     models_dir: PathBuf,
 }
@@ -82,6 +83,14 @@ impl ModelManager {
     /// Path a VAD model lives (or would live) at.
     pub fn vad_model_path(&self, model: &VadModel) -> PathBuf {
         self.models_dir.join(model.filename())
+    }
+
+    /// Path a Whisper model of the given tier lives (or would live) at,
+    /// regardless of whether it's downloaded or active. Used by startup
+    /// calibration (#144 Phase 2) to load engines for tiers other than the
+    /// currently active one.
+    pub fn model_path(&self, size: &ModelSize) -> PathBuf {
+        self.models_dir.join(size.filename())
     }
 
     /// Download a VAD model, unless it's already present, returning its path.

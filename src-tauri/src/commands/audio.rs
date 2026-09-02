@@ -3,9 +3,10 @@ use crate::audio::chunker::FrameChunker;
 use crate::audio::device;
 use crate::audio::state::AudioState;
 use crate::models::manager::ModelManager;
-use crate::models::registry::VadModel;
+use crate::models::registry::{ModelSize, VadModel};
 use crate::storage::models::TranscriptSegment;
 use crate::storage::repository::SessionRepository;
+use crate::transcription::calibration::{self, CalibrationResult};
 use crate::transcription::engine::{
     DecodeOptions, DecodeStrategy, TranscriptResult, TranscriptionEngine,
 };
@@ -247,7 +248,78 @@ pub async fn start_recording(
     let whisper_path = manager
         .active_model_path()
         .ok_or_else(|| "No active Whisper model — download one in Settings".to_string())?;
-    let engine = Arc::new(TranscriptionEngine::load(whisper_path).map_err(|e| e.to_string())?);
+    let starting_tier = ModelSize::ALL_BY_QUALITY
+        .into_iter()
+        .find(|size| whisper_path.file_name() == Some(std::ffi::OsStr::new(size.filename())))
+        .ok_or_else(|| "active Whisper model file name doesn't match any known tier".to_string())?;
+    let starting_engine =
+        Arc::new(TranscriptionEngine::load(whisper_path).map_err(|e| e.to_string())?);
+    let downloaded_tiers: Vec<ModelSize> = manager
+        .list()
+        .into_iter()
+        .filter(|info| info.downloaded)
+        .map(|info| info.size)
+        .collect();
+
+    // One-shot startup calibration (#144 Phase 2): measure real RTF on this
+    // machine at the user's chosen tier (never upgraded past it — that
+    // choice is a quality ceiling) and, if it can't keep up live, walk down
+    // to a smaller downloaded tier; if it comfortably keeps up, try
+    // upgrading decode strategy to beam search instead. Blocking because it
+    // runs real Whisper inference; done once, before either task starts, not
+    // mid-session.
+    let (engine, default_strategy) = {
+        let manager = manager.clone();
+        let pcm = calibration::calibration_pcm().map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(
+            move || -> Result<(Arc<TranscriptionEngine>, DecodeStrategy), String> {
+                let mut loaded: Vec<(ModelSize, Arc<TranscriptionEngine>)> =
+                    vec![(starting_tier, starting_engine)];
+                let CalibrationResult {
+                    model_size,
+                    strategy,
+                    samples,
+                } = calibration::calibrate(
+                    starting_tier,
+                    &downloaded_tiers,
+                    |tier, decode_strategy| {
+                        let engine = match loaded.iter().find(|(size, _)| *size == tier) {
+                            Some((_, engine)) => engine.clone(),
+                            None => {
+                                let engine =
+                                    Arc::new(TranscriptionEngine::load(manager.model_path(&tier))?);
+                                loaded.push((tier, engine.clone()));
+                                engine
+                            }
+                        };
+                        let options = DecodeOptions {
+                            strategy: decode_strategy,
+                            ..DecodeOptions::default()
+                        };
+                        let start = std::time::Instant::now();
+                        engine.transcribe(&pcm, &options)?;
+                        Ok(start.elapsed().as_secs_f64() / calibration::CALIBRATION_AUDIO_SECS)
+                    },
+                );
+
+                tracing::info!(
+                    ?model_size,
+                    ?strategy,
+                    ?samples,
+                    "startup calibration selected transcription tier/strategy"
+                );
+
+                let engine = loaded
+                    .into_iter()
+                    .find(|(size, _)| *size == model_size)
+                    .map(|(_, engine)| engine)
+                    .expect("calibrate() always measures its returned model_size at least once");
+                Ok((engine, strategy))
+            },
+        )
+        .await
+        .map_err(|e| format!("calibration task panicked: {e}"))??
+    };
 
     // Doesn't auto-download — VAD model must already be fetched via Settings,
     // same as the Whisper model above.
@@ -403,7 +475,7 @@ pub async fn start_recording(
             worker_loop(
                 queue_rx,
                 &transcriber,
-                DecodeStrategy::Greedy,
+                default_strategy,
                 session,
                 |result, start_ms, end_ms| {
                     persist_and_emit_segment(

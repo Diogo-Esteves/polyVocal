@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Available Whisper model sizes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelSize {
     Tiny,
@@ -54,6 +54,40 @@ impl ModelSize {
             ModelSize::Small => 465,
             ModelSize::Medium => 1500,
         }
+    }
+
+    /// All tiers ordered smallest/fastest to largest/highest-quality — the
+    /// order #144 Phase 2 calibration walks when downgrading a tier that
+    /// can't keep up with live speech on the current machine.
+    pub const ALL_BY_QUALITY: [ModelSize; 4] = [
+        ModelSize::Tiny,
+        ModelSize::Base,
+        ModelSize::Small,
+        ModelSize::Medium,
+    ];
+
+    /// This tier's position in [`ModelSize::ALL_BY_QUALITY`] (`Tiny` = 0,
+    /// `Medium` = 3) — used to find the next smaller tier during
+    /// calibration without hardcoding the ordering a second time.
+    fn quality_rank(&self) -> usize {
+        Self::ALL_BY_QUALITY
+            .iter()
+            .position(|s| s == self)
+            .expect("ALL_BY_QUALITY must list every ModelSize variant")
+    }
+
+    /// The largest tier in `downloaded` that is strictly smaller (lower
+    /// quality/cost) than `self`, or `None` if `self` is already the
+    /// smallest downloaded tier (or `downloaded` is empty / contains
+    /// nothing smaller). Calibration (#144 Phase 2) uses this to step down
+    /// one tier at a time when the current tier can't keep up live.
+    pub fn next_smaller_downloaded(&self, downloaded: &[ModelSize]) -> Option<ModelSize> {
+        let my_rank = self.quality_rank();
+        downloaded
+            .iter()
+            .filter(|s| s.quality_rank() < my_rank)
+            .max_by_key(|s| s.quality_rank())
+            .copied()
     }
 }
 
@@ -368,5 +402,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_quality_rank_is_strictly_increasing_by_quality() {
+        assert!(ModelSize::Tiny.quality_rank() < ModelSize::Base.quality_rank());
+        assert!(ModelSize::Base.quality_rank() < ModelSize::Small.quality_rank());
+        assert!(ModelSize::Small.quality_rank() < ModelSize::Medium.quality_rank());
+    }
+
+    #[test]
+    fn test_next_smaller_downloaded_finds_largest_option_below_self() {
+        let downloaded = [ModelSize::Tiny, ModelSize::Base, ModelSize::Medium];
+        assert_eq!(
+            ModelSize::Medium.next_smaller_downloaded(&downloaded),
+            Some(ModelSize::Base)
+        );
+    }
+
+    #[test]
+    fn test_next_smaller_downloaded_none_when_self_is_smallest_downloaded() {
+        let downloaded = [ModelSize::Tiny, ModelSize::Small];
+        assert_eq!(ModelSize::Tiny.next_smaller_downloaded(&downloaded), None);
+    }
+
+    #[test]
+    fn test_next_smaller_downloaded_none_when_downloaded_is_empty() {
+        assert_eq!(ModelSize::Medium.next_smaller_downloaded(&[]), None);
+    }
+
+    #[test]
+    fn test_next_smaller_downloaded_ignores_tiers_larger_than_self() {
+        // Only Medium is downloaded, which is larger than Small — nothing
+        // smaller than Small is available, so this must be None, not Medium.
+        let downloaded = [ModelSize::Medium];
+        assert_eq!(ModelSize::Small.next_smaller_downloaded(&downloaded), None);
     }
 }
