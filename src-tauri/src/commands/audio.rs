@@ -176,10 +176,10 @@ fn rms_level(samples: &[f32]) -> f32 {
 /// backed up behind it (`queue_rx.len() > 0` right after receiving it) —
 /// ~5x cheaper than beam search, strictly better than losing the segment
 /// to the producer's drop-on-overload backstop. `default_strategy` is what
-/// gets used when *not* behind; today that's always `Greedy` too (matching
-/// the Phase 0 live-capture default — see `start_recording`), but this is
-/// real, exercised infrastructure for whenever a "prefer accuracy" setting
-/// picks `BeamSearch` for the caught-up case (#144 Phase 2, #22).
+/// gets used when *not* behind — startup calibration (#144 Phase 2, in
+/// `start_recording`) picks it per-session based on measured RTF on this
+/// machine: `Greedy` if even that couldn't keep up within budget, or
+/// `BeamSearch` if there was RTF headroom for the better-quality decode.
 async fn worker_loop<T, F, Fut>(
     mut queue_rx: mpsc::Receiver<ClosedSegment>,
     transcriber: &T,
@@ -232,12 +232,6 @@ pub async fn start_recording(
     pool: State<'_, SqlitePool>,
     device_id: Option<String>,
 ) -> Result<(), String> {
-    let mut slot = state.0.lock().await;
-
-    if !slot.audio_state.is_idle() {
-        return Err("Already recording".to_string());
-    }
-
     let models_dir = app
         .path()
         .app_data_dir()
@@ -267,7 +261,12 @@ pub async fn start_recording(
     // to a smaller downloaded tier; if it comfortably keeps up, try
     // upgrading decode strategy to beam search instead. Blocking because it
     // runs real Whisper inference; done once, before either task starts, not
-    // mid-session.
+    // mid-session. Deliberately run *before* `RecordingState` is locked
+    // below — this can take anywhere from a couple seconds to over a minute
+    // (every downloaded tier × both strategies, worst case), and holding
+    // the lock across it would block `stop_recording` (and any other lock
+    // user) for that whole window even though no recording has actually
+    // started yet.
     let (engine, default_strategy) = {
         let manager = manager.clone();
         let pcm = calibration::calibration_pcm().map_err(|e| e.to_string())?;
@@ -320,6 +319,12 @@ pub async fn start_recording(
         .await
         .map_err(|e| format!("calibration task panicked: {e}"))??
     };
+
+    let mut slot = state.0.lock().await;
+
+    if !slot.audio_state.is_idle() {
+        return Err("Already recording".to_string());
+    }
 
     // Doesn't auto-download — VAD model must already be fetched via Settings,
     // same as the Whisper model above.
