@@ -232,6 +232,20 @@ pub async fn start_recording(
     pool: State<'_, SqlitePool>,
     device_id: Option<String>,
 ) -> Result<(), String> {
+    // Fail fast if a recording is already active — best-effort, since
+    // calibration below runs unlocked and two racing calls can both pass
+    // this check; the authoritative check-and-commit happens again right
+    // after calibration completes, immediately before `slot` is mutated.
+    // Without this, a duplicate call would run the entire (up to a minute
+    // long) calibration battery before being rejected, instead of failing
+    // near-instantly.
+    {
+        let slot = state.0.lock().await;
+        if !slot.audio_state.is_idle() {
+            return Err("Already recording".to_string());
+        }
+    }
+
     let models_dir = app
         .path()
         .app_data_dir()
