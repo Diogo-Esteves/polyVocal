@@ -33,12 +33,7 @@ async fn benchmark_rtf_across_model_tiers_and_decode_strategies() {
 
     let pcm = calibration_pcm().expect("embedded calibration fixture should decode");
 
-    let tiers = [
-        ModelSize::Tiny,
-        ModelSize::Base,
-        ModelSize::Small,
-        ModelSize::Medium,
-    ];
+    let tiers = ModelSize::ALL_BY_QUALITY;
     let strategies = [
         DecodeStrategy::Greedy,
         DecodeStrategy::BeamSearch { beam_size: 5 },

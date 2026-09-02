@@ -322,11 +322,31 @@ pub async fn start_recording(
                     "startup calibration selected transcription tier/strategy"
                 );
 
-                let engine = loaded
-                    .into_iter()
-                    .find(|(size, _)| *size == model_size)
-                    .map(|(_, engine)| engine)
-                    .expect("calibrate() always measures its returned model_size at least once");
+                let (engine, strategy) = match loaded.iter().find(|(size, _)| *size == model_size) {
+                    Some((_, engine)) => (engine.clone(), strategy),
+                    None => {
+                        // The winning tier's own `TranscriptionEngine::load` failed during
+                        // measurement (e.g. a corrupted/partial model file that still passes
+                        // `manager.list()`'s `path.exists()` check) — `calibrate()` has no way
+                        // to know that and still returned it as the pick. Fall back to
+                        // `starting_tier`, whose engine is always loaded up front and never
+                        // removed from `loaded`, at Greedy — safer than trusting a strategy
+                        // that was measured against a tier which never actually loaded.
+                        tracing::warn!(
+                            ?model_size,
+                            "calibration-selected tier's model failed to load — \
+                             falling back to the starting tier at greedy decoding"
+                        );
+                        let engine = loaded
+                            .iter()
+                            .find(|(size, _)| *size == starting_tier)
+                            .map(|(_, engine)| engine.clone())
+                            .expect(
+                                "starting_tier's engine is loaded before calibration begins and never removed",
+                            );
+                        (engine, DecodeStrategy::Greedy)
+                    }
+                };
                 Ok((engine, strategy))
             },
         )
