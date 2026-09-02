@@ -38,11 +38,25 @@ impl TranscriptionEngine {
             .create_state()
             .map_err(|e| anyhow!("failed to create Whisper state: {e}"))?;
 
-        let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-            beam_size: 5,
-            patience: -1.0,
-        });
+        // Greedy, not beam search: beam_size 5 is ~5x the compute per segment,
+        // which pushed live transcription below real-time on typical
+        // hardware and starved the capture channel (see #144). Beam search
+        // stays a candidate for a future non-live "re-transcribe for
+        // accuracy" path, not the live-capture default.
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
         params.set_language(None); // auto-detect, per DEC-003
+                                   // whisper-rs defaults to 4 threads regardless of what's available:
+                                   // that's what a "25% CPU, still can't keep up live" reading on a
+                                   // 16-core machine actually was (see #144) — under-using the
+                                   // hardware while still falling behind it. Capped at 8 rather than
+                                   // using every core: whisper.cpp's own thread scaling flattens out
+                                   // well before that on typical consumer core counts, and this task
+                                   // shares the machine with audio capture and VAD.
+        let n_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(8) as std::os::raw::c_int;
+        params.set_n_threads(n_threads);
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
