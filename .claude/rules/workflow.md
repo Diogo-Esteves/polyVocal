@@ -22,6 +22,11 @@ options) that the roadmap's phase-level checkboxes don't.
   `feat/...`, `chore/...`; PR merges rewrite commit hashes on `main` — if a
   stacked branch stops appearing merged after another PR lands, that's why,
   not a sign work was lost).
+- After a task's PR merges (or work is abandoned), clean up: `git worktree
+  remove <path>`, delete the now-merged branches locally and remotely, and
+  fast-forward the main checkout. This applies to worktrees created directly
+  in this session or via subagent isolation (`.claude/worktrees/agent-*` paths)
+  — both are easy to forget since they're outside the main working directory.
 - Run `cargo fmt`, `cargo clippy -D warnings`, and the full test suite
   (see `commands.md`) before calling backend work done — all three are
   cheap and CI enforces them anyway. The `/precommit` command runs the
