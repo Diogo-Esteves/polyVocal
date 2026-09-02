@@ -1,19 +1,14 @@
-use super::session::TranscriptionSession;
 use crate::vad::segmenter::{SpeechSegmenter, VoiceActivityScorer};
 use anyhow::Result;
 
-/// Wires VAD segmentation and session accumulation together. Deliberately
-/// does *not* own or call the transcription engine directly (see DEC-006
-/// and issue #45) — Whisper inference is CPU-bound and must run off the
-/// async executor via `spawn_blocking`, which needs to take ownership of
-/// the engine per call; a struct field can't be moved in and out of a
-/// `&mut self` method that way. Callers own the engine themselves, call
-/// `push_frame`/`flush` to get raw segment samples, transcribe those
-/// off-executor on their own, and report the result back via
-/// `record_transcript`.
+/// Wires VAD segmentation only — does *not* own the transcription session
+/// (that lives on the dedicated transcription worker task; see `commands::audio`)
+/// or call the transcription engine directly (see DEC-006 and issue #45) —
+/// Whisper inference is CPU-bound and must run off the async executor via
+/// `spawn_blocking`. Callers call `push_frame`/`flush` to get raw segment
+/// samples, transcribe those off-executor on their own.
 pub struct RecordingPipeline<V: VoiceActivityScorer> {
     segmenter: SpeechSegmenter<V>,
-    session: TranscriptionSession,
     samples_seen: usize,
 }
 
@@ -45,7 +40,6 @@ impl<V: VoiceActivityScorer> RecordingPipeline<V> {
     pub fn new(segmenter: SpeechSegmenter<V>) -> Self {
         Self {
             segmenter,
-            session: TranscriptionSession::new(),
             samples_seen: 0,
         }
     }
@@ -87,20 +81,14 @@ impl<V: VoiceActivityScorer> RecordingPipeline<V> {
         }
     }
 
-    /// Records a transcription result (for a segment previously returned
-    /// by `push_frame` or `flush`) into the accumulated session.
-    pub fn record_transcript(&mut self, text: &str, language: &str) {
-        self.session.append(text, language);
-    }
-
-    /// The session accumulated so far.
-    pub fn session(&self) -> &TranscriptionSession {
-        &self.session
-    }
-
-    /// Consumes the pipeline, returning the finalized session.
-    pub fn finish(self) -> TranscriptionSession {
-        self.session
+    /// Advances the pipeline's sample clock for audio that never reached it —
+    /// dropped upstream by the capture channel (see `audio::capture`) — so
+    /// later segments' `start_ms`/`end_ms` don't drift earlier than wall clock
+    /// by however much silently-dropped audio preceded them. Regression fix
+    /// for #144 (`samples_seen` previously only counted frames that actually
+    /// arrived).
+    pub fn account_for_dropped_samples(&mut self, dropped: usize) {
+        self.samples_seen += dropped;
     }
 }
 
@@ -142,7 +130,6 @@ mod tests {
         for _ in 0..3 {
             assert_eq!(pipeline.push_frame(&frame).unwrap(), None);
         }
-        assert!(pipeline.session().transcript.is_empty());
     }
 
     #[test]
@@ -160,22 +147,6 @@ mod tests {
 
         let samples = produced.expect("segment should close after silence hangover");
         assert_eq!(samples.len(), 16); // 4 frames * 4 samples
-                                       // Nothing recorded into the session until the caller reports back.
-        assert!(pipeline.session().transcript.is_empty());
-    }
-
-    #[test]
-    fn test_record_transcript_updates_session() {
-        let mut pipeline = RecordingPipeline::new(segmenter(vec![0.9, 0.9, 0.0, 0.0]));
-        let frame = vec![0.1f32; 4];
-        for _ in 0..4 {
-            pipeline.push_frame(&frame).unwrap();
-        }
-
-        pipeline.record_transcript("hello", "en");
-
-        assert_eq!(pipeline.session().transcript, "hello");
-        assert_eq!(pipeline.session().detected_language.as_deref(), Some("en"));
     }
 
     #[test]
@@ -244,15 +215,23 @@ mod tests {
     }
 
     #[test]
-    fn test_finish_returns_accumulated_session() {
+    fn test_account_for_dropped_samples_shifts_later_segment_offsets_forward() {
+        // A silence frame, then a dropped chunk equivalent to 4 samples, then
+        // a segment that closes — its offset must start after the dropped
+        // samples, not at 0.
         let mut pipeline = RecordingPipeline::new(segmenter(vec![0.9, 0.9, 0.0, 0.0]));
-        let frame = vec![0.1f32; 4];
-        for _ in 0..4 {
-            pipeline.push_frame(&frame).unwrap();
-        }
-        pipeline.record_transcript("hello", "en");
+        pipeline.account_for_dropped_samples(4);
 
-        let session = pipeline.finish();
-        assert_eq!(session.detected_language.as_deref(), Some("en"));
+        let frame = vec![0.1f32; 4];
+        let mut produced = None;
+        for _ in 0..4 {
+            if let Some(segment) = pipeline.push_frame(&frame).unwrap() {
+                produced = Some(segment);
+            }
+        }
+
+        let segment = produced.expect("segment should close after silence hangover");
+        assert_eq!(segment.start_ms, samples_to_ms(4));
+        assert_eq!(segment.end_ms, samples_to_ms(4 + 16));
     }
 }

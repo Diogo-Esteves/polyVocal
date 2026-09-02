@@ -5,6 +5,7 @@ use anyhow::Result;
 use chrono::Utc;
 use sqlx::SqlitePool;
 
+#[derive(Clone)]
 pub struct SessionRepository {
     pool: SqlitePool,
 }

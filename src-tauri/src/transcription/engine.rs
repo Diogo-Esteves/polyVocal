@@ -2,6 +2,52 @@ use anyhow::{anyhow, Result};
 use std::path::PathBuf;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+/// Decoding knobs for a single `transcribe` call — kept out of
+/// `TranscriptionEngine` itself so callers (e.g. the live-transcription
+/// worker in `commands::audio`) can vary strategy per segment without
+/// touching the engine, and so a future adaptive-tier selector (#144 Phase 2)
+/// or forced-language option (#22) can be threaded through without an engine
+/// API change.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodeOptions {
+    pub strategy: DecodeStrategy,
+    pub n_threads: std::os::raw::c_int,
+    /// `None` = auto-detect (whisper.cpp default, DEC-003).
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeStrategy {
+    /// ~5x cheaper than beam search; the live-capture default (see #144).
+    Greedy,
+    BeamSearch {
+        beam_size: std::os::raw::c_int,
+    },
+}
+
+impl Default for DecodeOptions {
+    fn default() -> Self {
+        Self {
+            strategy: DecodeStrategy::Greedy,
+            n_threads: default_n_threads(),
+            language: None,
+        }
+    }
+}
+
+/// whisper-rs defaults to 4 threads regardless of what's available: that's
+/// what a "25% CPU, still can't keep up live" reading on a 16-core machine
+/// actually was (see #144) — under-using the hardware while still falling
+/// behind it. Capped at 8 rather than using every core: whisper.cpp's own
+/// thread scaling flattens out well before that on typical consumer core
+/// counts, and this task shares the machine with audio capture and VAD.
+pub fn default_n_threads() -> std::os::raw::c_int {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(8) as std::os::raw::c_int
+}
+
 /// Wrapper around a loaded whisper-rs model.
 #[derive(Debug)]
 pub struct TranscriptionEngine {
@@ -28,7 +74,7 @@ impl TranscriptionEngine {
     ///
     /// # Errors
     /// Returns an error if `pcm` is empty — there's nothing to transcribe.
-    pub fn transcribe(&self, pcm: &[f32]) -> Result<TranscriptResult> {
+    pub fn transcribe(&self, pcm: &[f32], options: &DecodeOptions) -> Result<TranscriptResult> {
         if pcm.is_empty() {
             return Err(anyhow!("Cannot transcribe empty audio buffer"));
         }
@@ -38,25 +84,17 @@ impl TranscriptionEngine {
             .create_state()
             .map_err(|e| anyhow!("failed to create Whisper state: {e}"))?;
 
-        // Greedy, not beam search: beam_size 5 is ~5x the compute per segment,
-        // which pushed live transcription below real-time on typical
-        // hardware and starved the capture channel (see #144). Beam search
-        // stays a candidate for a future non-live "re-transcribe for
-        // accuracy" path, not the live-capture default.
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
-        params.set_language(None); // auto-detect, per DEC-003
-                                   // whisper-rs defaults to 4 threads regardless of what's available:
-                                   // that's what a "25% CPU, still can't keep up live" reading on a
-                                   // 16-core machine actually was (see #144) — under-using the
-                                   // hardware while still falling behind it. Capped at 8 rather than
-                                   // using every core: whisper.cpp's own thread scaling flattens out
-                                   // well before that on typical consumer core counts, and this task
-                                   // shares the machine with audio capture and VAD.
-        let n_threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-            .min(8) as std::os::raw::c_int;
-        params.set_n_threads(n_threads);
+        let mut params = match options.strategy {
+            DecodeStrategy::Greedy => FullParams::new(SamplingStrategy::Greedy { best_of: 5 }),
+            DecodeStrategy::BeamSearch { beam_size } => {
+                FullParams::new(SamplingStrategy::BeamSearch {
+                    beam_size,
+                    patience: -1.0,
+                })
+            }
+        };
+        params.set_language(options.language.as_deref());
+        params.set_n_threads(options.n_threads);
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
@@ -94,14 +132,14 @@ impl TranscriptionEngine {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TranscriptResult {
     pub text: String,
     pub language: String,
     pub segments: Vec<Segment>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Segment {
     pub start_ms: i64,
     pub end_ms: i64,
@@ -160,11 +198,11 @@ mod tests {
         let model_path = models_dir.join(ModelSize::Tiny.filename());
         let engine = TranscriptionEngine::load(model_path).expect("real model should load");
 
-        assert!(engine.transcribe(&[]).is_err());
+        assert!(engine.transcribe(&[], &DecodeOptions::default()).is_err());
 
         let pcm = vec![0.0f32; 16000]; // 1 second of silence at 16kHz
         let result = engine
-            .transcribe(&pcm)
+            .transcribe(&pcm, &DecodeOptions::default())
             .expect("real inference should not fail on silence");
 
         // Silence isn't real speech, so we can't assert on transcript
