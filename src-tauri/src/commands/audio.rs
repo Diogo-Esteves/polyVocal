@@ -232,20 +232,41 @@ pub async fn start_recording(
     pool: State<'_, SqlitePool>,
     device_id: Option<String>,
 ) -> Result<(), String> {
-    // Fail fast if a recording is already active — best-effort, since
-    // calibration below runs unlocked and two racing calls can both pass
-    // this check; the authoritative check-and-commit happens again right
-    // after calibration completes, immediately before `slot` is mutated.
-    // Without this, a duplicate call would run the entire (up to a minute
-    // long) calibration battery before being rejected, instead of failing
-    // near-instantly.
+    // Claim exclusivity up front, before calibration runs unlocked below.
+    // This is both the fast-fail check (a duplicate call sees `Starting`
+    // and is rejected immediately) and the authoritative one — unlike a
+    // read-only pre-check, a second racing call can't also slip into
+    // calibration and double this machine's peak memory/CPU while it runs,
+    // exactly the low-resource-machine problem #144 exists to fix.
     {
-        let slot = state.0.lock().await;
-        if !slot.audio_state.is_idle() {
-            return Err("Already recording".to_string());
-        }
+        let mut slot = state.0.lock().await;
+        slot.audio_state = slot.audio_state.clone().begin_starting()?;
     }
 
+    let result = start_recording_inner(app, state.clone(), pool, device_id).await;
+
+    if result.is_err() {
+        // Setup failed somewhere after the claim above — release it so a
+        // later call isn't rejected forever.
+        let mut slot = state.0.lock().await;
+        slot.audio_state = slot.audio_state.clone().abort_starting();
+    }
+
+    result
+}
+
+/// Does the real work of `start_recording`, once `RecordingState` has
+/// already been claimed (`AudioState::Starting`) by the caller above — kept
+/// as a separate fn so that claim/rollback wrapping stays trivial to read.
+/// Returning `Err` here leaves releasing the claim to the caller; nothing
+/// in here touches `RecordingState` until the very end, where it commits
+/// the finished setup.
+async fn start_recording_inner(
+    app: AppHandle,
+    state: State<'_, RecordingState>,
+    pool: State<'_, SqlitePool>,
+    device_id: Option<String>,
+) -> Result<(), String> {
     let models_dir = app
         .path()
         .app_data_dir()
@@ -274,91 +295,37 @@ pub async fn start_recording(
     // choice is a quality ceiling) and, if it can't keep up live, walk down
     // to a smaller downloaded tier; if it comfortably keeps up, try
     // upgrading decode strategy to beam search instead. Blocking because it
-    // runs real Whisper inference; done once, before either task starts, not
-    // mid-session. Deliberately run *before* `RecordingState` is locked
-    // below — this can take anywhere from a couple seconds to over a minute
-    // (every downloaded tier × both strategies, worst case), and holding
-    // the lock across it would block `stop_recording` (and any other lock
-    // user) for that whole window even though no recording has actually
-    // started yet.
+    // runs real Whisper inference; done once, before either task starts,
+    // not mid-session. Runs unlocked — `RecordingState` was already claimed
+    // (`AudioState::Starting`) by the caller before this fn was entered, so
+    // no other `start_recording` call can also enter calibration while this
+    // one is running, without needing to hold the lock for calibration's
+    // (up to a minute long) duration.
     let (engine, default_strategy) = {
         let manager = manager.clone();
         let pcm = calibration::calibration_pcm().map_err(|e| e.to_string())?;
         tokio::task::spawn_blocking(
             move || -> Result<(Arc<TranscriptionEngine>, DecodeStrategy), String> {
-                let mut loaded: Vec<(ModelSize, Arc<TranscriptionEngine>)> =
-                    vec![(starting_tier, starting_engine)];
-                let CalibrationResult {
-                    model_size,
-                    strategy,
-                    samples,
-                } = calibration::calibrate(
+                Ok(select_engine_and_strategy(
                     starting_tier,
+                    starting_engine,
                     &downloaded_tiers,
-                    |tier, decode_strategy| {
-                        let engine = match loaded.iter().find(|(size, _)| *size == tier) {
-                            Some((_, engine)) => engine.clone(),
-                            None => {
-                                let engine =
-                                    Arc::new(TranscriptionEngine::load(manager.model_path(&tier))?);
-                                loaded.push((tier, engine.clone()));
-                                engine
-                            }
-                        };
+                    |tier| TranscriptionEngine::load(manager.model_path(&tier)).map(Arc::new),
+                    |engine, strategy| {
                         let options = DecodeOptions {
-                            strategy: decode_strategy,
+                            strategy,
                             ..DecodeOptions::default()
                         };
                         let start = std::time::Instant::now();
                         engine.transcribe(&pcm, &options)?;
                         Ok(start.elapsed().as_secs_f64() / calibration::CALIBRATION_AUDIO_SECS)
                     },
-                );
-
-                tracing::info!(
-                    ?model_size,
-                    ?strategy,
-                    ?samples,
-                    "startup calibration selected transcription tier/strategy"
-                );
-
-                let (engine, strategy) = match loaded.iter().find(|(size, _)| *size == model_size) {
-                    Some((_, engine)) => (engine.clone(), strategy),
-                    None => {
-                        // The winning tier's own `TranscriptionEngine::load` failed during
-                        // measurement (e.g. a corrupted/partial model file that still passes
-                        // `manager.list()`'s `path.exists()` check) — `calibrate()` has no way
-                        // to know that and still returned it as the pick. Fall back to
-                        // `starting_tier`, whose engine is always loaded up front and never
-                        // removed from `loaded`, at Greedy — safer than trusting a strategy
-                        // that was measured against a tier which never actually loaded.
-                        tracing::warn!(
-                            ?model_size,
-                            "calibration-selected tier's model failed to load — \
-                             falling back to the starting tier at greedy decoding"
-                        );
-                        let engine = loaded
-                            .iter()
-                            .find(|(size, _)| *size == starting_tier)
-                            .map(|(_, engine)| engine.clone())
-                            .expect(
-                                "starting_tier's engine is loaded before calibration begins and never removed",
-                            );
-                        (engine, DecodeStrategy::Greedy)
-                    }
-                };
-                Ok((engine, strategy))
+                ))
             },
         )
         .await
         .map_err(|e| format!("calibration task panicked: {e}"))??
     };
-
-    let mut slot = state.0.lock().await;
-
-    if !slot.audio_state.is_idle() {
-        return Err("Already recording".to_string());
-    }
 
     // Doesn't auto-download — VAD model must already be fetched via Settings,
     // same as the Whisper model above.
@@ -531,6 +498,7 @@ pub async fn start_recording(
         }
     });
 
+    let mut slot = state.0.lock().await;
     let device_label = device_id.unwrap_or_else(|| "default".to_string());
     slot.audio_state = slot.audio_state.clone().start_recording(device_label)?;
     slot.active = Some(ActiveRecording {
@@ -541,6 +509,155 @@ pub async fn start_recording(
     });
 
     Ok(())
+}
+
+/// Orchestrates calibration for a session against a cache of loaded tier
+/// engines, seeded with the already-loaded `starting_engine`: runs
+/// `calibration::calibrate()`, loading additional tiers on demand via
+/// `load_engine` (cached, so a tier measured twice — greedy then beam —
+/// only ever loads once), and falls back to `starting_tier`'s engine at
+/// `Greedy` if the tier `calibrate()` picks isn't in the cache — i.e. its
+/// own `load_engine` call failed during measurement. A corrupted or
+/// partially-downloaded model file can still pass `ModelManager::list()`'s
+/// `path.exists()` check, so `calibrate()` has no way to know the tier it
+/// picked never actually loaded (#144). Generic over the engine/loader
+/// types so this orchestration logic is unit-testable without real Whisper
+/// models — see the tests below.
+fn select_engine_and_strategy<E, L, M>(
+    starting_tier: ModelSize,
+    starting_engine: E,
+    downloaded_tiers: &[ModelSize],
+    mut load_engine: L,
+    mut measure: M,
+) -> (E, DecodeStrategy)
+where
+    E: Clone,
+    L: FnMut(ModelSize) -> anyhow::Result<E>,
+    M: FnMut(&E, DecodeStrategy) -> anyhow::Result<f64>,
+{
+    let mut loaded: Vec<(ModelSize, E)> = vec![(starting_tier, starting_engine)];
+
+    let CalibrationResult {
+        model_size,
+        strategy,
+        samples,
+    } = calibration::calibrate(starting_tier, downloaded_tiers, |tier, decode_strategy| {
+        let engine = match loaded.iter().find(|(size, _)| *size == tier) {
+            Some((_, engine)) => engine.clone(),
+            None => {
+                let engine = load_engine(tier)?;
+                loaded.push((tier, engine.clone()));
+                engine
+            }
+        };
+        measure(&engine, decode_strategy)
+    });
+
+    tracing::info!(
+        ?model_size,
+        ?strategy,
+        ?samples,
+        "startup calibration selected transcription tier/strategy"
+    );
+
+    match loaded.iter().find(|(size, _)| *size == model_size) {
+        Some((_, engine)) => (engine.clone(), strategy),
+        None => {
+            tracing::warn!(
+                ?model_size,
+                "calibration-selected tier's model failed to load — \
+                 falling back to the starting tier at greedy decoding"
+            );
+            let engine = loaded
+                .iter()
+                .find(|(size, _)| *size == starting_tier)
+                .map(|(_, engine)| engine.clone())
+                .expect(
+                    "starting_tier's engine is loaded before calibration begins and never removed",
+                );
+            (engine, DecodeStrategy::Greedy)
+        }
+    }
+}
+
+#[cfg(test)]
+mod select_engine_and_strategy_tests {
+    use super::*;
+
+    #[test]
+    fn test_uses_the_winning_tiers_own_engine_when_it_loads_fine() {
+        let result = select_engine_and_strategy(
+            ModelSize::Medium,
+            "medium-engine",
+            &[ModelSize::Small, ModelSize::Medium],
+            |tier| match tier {
+                ModelSize::Small => Ok("small-engine"),
+                other => unreachable!("unexpected load for {other:?}"),
+            },
+            |engine, strategy| {
+                let base_rtf = match *engine {
+                    "medium-engine" => 2.0,
+                    "small-engine" => 0.3,
+                    other => unreachable!("unexpected engine {other}"),
+                };
+                Ok(match strategy {
+                    DecodeStrategy::Greedy => base_rtf,
+                    DecodeStrategy::BeamSearch { .. } => base_rtf * 2.0,
+                })
+            },
+        );
+
+        assert_eq!(
+            result,
+            ("small-engine", DecodeStrategy::BeamSearch { beam_size: 5 })
+        );
+    }
+
+    #[test]
+    fn test_falls_back_to_starting_tier_when_the_winning_tiers_load_fails() {
+        // Medium (the starting tier) is too slow at greedy; Small is
+        // smaller and would normally win, but its "load" always fails —
+        // e.g. a corrupted model file that still passed the downloaded-tier
+        // check upstream.
+        let result = select_engine_and_strategy(
+            ModelSize::Medium,
+            "medium-engine",
+            &[ModelSize::Small, ModelSize::Medium],
+            |tier| match tier {
+                ModelSize::Small => Err(anyhow::anyhow!("simulated corrupt model file")),
+                other => unreachable!("unexpected load for {other:?}"),
+            },
+            |_engine, strategy| {
+                Ok(match strategy {
+                    DecodeStrategy::Greedy => 2.0, // over budget at Medium
+                    DecodeStrategy::BeamSearch { .. } => 10.0,
+                })
+            },
+        );
+
+        assert_eq!(result, ("medium-engine", DecodeStrategy::Greedy));
+    }
+
+    #[test]
+    fn test_stays_at_starting_tier_when_it_already_fits() {
+        let result = select_engine_and_strategy(
+            ModelSize::Tiny,
+            "tiny-engine",
+            &[ModelSize::Tiny],
+            |tier| unreachable!("no smaller tier than Tiny should ever need loading: {tier:?}"),
+            |_engine, strategy| {
+                Ok(match strategy {
+                    DecodeStrategy::Greedy => 0.05,
+                    DecodeStrategy::BeamSearch { .. } => 0.1,
+                })
+            },
+        );
+
+        assert_eq!(
+            result,
+            ("tiny-engine", DecodeStrategy::BeamSearch { beam_size: 5 })
+        );
+    }
 }
 
 /// Creates the in-progress session row `start_recording` needs before the

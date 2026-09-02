@@ -5,12 +5,19 @@ use uuid::Uuid;
 ///
 /// Tracks the lifecycle of audio recording sessions:
 /// - Idle: not recording
+/// - Starting: startup setup (including #144 Phase 2 calibration, which can
+///   take anywhere from a couple seconds to over a minute) is in progress —
+///   claims exclusivity so a second concurrent start is rejected instead of
+///   also entering calibration, without holding any lock for that duration
 /// - Recording: active recording session
 /// - Stopping: graceful shutdown in progress
 #[derive(Debug, Clone)]
 pub enum AudioState {
     /// No active recording.
     Idle,
+
+    /// A recording is being set up (see the module doc above).
+    Starting,
 
     /// Currently recording.
     Recording {
@@ -35,16 +42,48 @@ impl AudioState {
         AudioState::Idle
     }
 
+    /// Claim exclusivity before a recording's (potentially slow) startup
+    /// setup begins (#144 Phase 2). Transitions Idle -> Starting; errors
+    /// from any other state, including `Starting` itself — i.e. a second,
+    /// racing `start_recording` call.
+    pub fn begin_starting(self) -> Result<Self, String> {
+        match self {
+            AudioState::Idle => Ok(AudioState::Starting),
+            AudioState::Starting => Err("Cannot start recording: already starting".to_string()),
+            AudioState::Recording { .. } => {
+                Err("Cannot start recording: already recording".to_string())
+            }
+            AudioState::Stopping { .. } => {
+                Err("Cannot start recording: previous session is stopping".to_string())
+            }
+        }
+    }
+
+    /// Release a claim made by `begin_starting` after startup setup failed
+    /// partway through, returning to `Idle` so a later call isn't rejected
+    /// forever. A no-op (returns `self` unchanged) from any other state —
+    /// defensive only, since normal usage only ever calls this right after
+    /// a `begin_starting()`-claimed attempt failed.
+    pub fn abort_starting(self) -> Self {
+        match self {
+            AudioState::Starting => AudioState::Idle,
+            other => other,
+        }
+    }
+
     /// Transition to recording state.
     ///
     /// # Arguments
     /// * `device_id` - ID of the audio input device
     ///
     /// # Returns
-    /// New Recording state with generated session ID, or an error if already recording.
+    /// New Recording state with generated session ID, or an error if
+    /// already recording. Valid from `Idle` (direct, no calibration claim)
+    /// or `Starting` (the normal #144 Phase 2 path — `begin_starting` was
+    /// called first).
     pub fn start_recording(self, device_id: String) -> Result<Self, String> {
         match self {
-            AudioState::Idle => {
+            AudioState::Idle | AudioState::Starting => {
                 let session_id = Uuid::new_v4().to_string();
                 Ok(AudioState::Recording {
                     session_id,
@@ -69,6 +108,7 @@ impl AudioState {
         match self {
             AudioState::Recording { session_id, .. } => Ok(AudioState::Stopping { session_id }),
             AudioState::Idle => Err("Cannot stop: not recording".to_string()),
+            AudioState::Starting => Err("Cannot stop: not recording".to_string()),
             AudioState::Stopping { .. } => Err("Cannot stop: already stopping".to_string()),
         }
     }
@@ -81,6 +121,7 @@ impl AudioState {
         match self {
             AudioState::Stopping { .. } => Ok(AudioState::Idle),
             AudioState::Idle => Err("Cannot finalize: not recording".to_string()),
+            AudioState::Starting => Err("Cannot finalize: not recording".to_string()),
             AudioState::Recording { .. } => {
                 Err("Cannot finalize: must stop before finalizing".to_string())
             }
@@ -93,6 +134,7 @@ impl AudioState {
             AudioState::Recording { session_id, .. } => Some(session_id),
             AudioState::Stopping { session_id } => Some(session_id),
             AudioState::Idle => None,
+            AudioState::Starting => None,
         }
     }
 
@@ -284,5 +326,78 @@ mod tests {
 
         let state = state.finalize().expect("should finalize");
         assert_eq!(state.device_id(), None);
+    }
+
+    #[test]
+    fn test_begin_starting_from_idle() {
+        let state = AudioState::idle()
+            .begin_starting()
+            .expect("should claim starting");
+        assert!(!state.is_idle());
+        assert!(!state.is_recording());
+    }
+
+    #[test]
+    fn test_begin_starting_twice_fails() {
+        let state = AudioState::idle()
+            .begin_starting()
+            .expect("should claim starting");
+        let result = state.begin_starting();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already starting"));
+    }
+
+    #[test]
+    fn test_cannot_begin_starting_while_recording() {
+        let state = AudioState::idle()
+            .start_recording("device_1".to_string())
+            .expect("should start recording");
+        let result = state.begin_starting();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already recording"));
+    }
+
+    #[test]
+    fn test_start_recording_from_starting() {
+        let state = AudioState::idle()
+            .begin_starting()
+            .expect("should claim starting");
+        let state = state
+            .start_recording("device_1".to_string())
+            .expect("should transition to recording");
+        assert!(state.is_recording());
+        assert_eq!(state.device_id(), Some("device_1"));
+    }
+
+    #[test]
+    fn test_abort_starting_returns_to_idle() {
+        let state = AudioState::idle()
+            .begin_starting()
+            .expect("should claim starting");
+        let state = state.abort_starting();
+        assert!(state.is_idle());
+    }
+
+    #[test]
+    fn test_abort_starting_is_a_no_op_when_not_starting() {
+        let state = AudioState::idle();
+        let state = state.abort_starting();
+        assert!(state.is_idle());
+
+        let state = state
+            .start_recording("device_1".to_string())
+            .expect("should start recording");
+        let state = state.abort_starting();
+        assert!(state.is_recording());
+    }
+
+    #[test]
+    fn test_cannot_stop_while_starting() {
+        let state = AudioState::idle()
+            .begin_starting()
+            .expect("should claim starting");
+        let result = state.stop_recording();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not recording"));
     }
 }
