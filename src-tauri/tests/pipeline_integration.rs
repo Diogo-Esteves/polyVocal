@@ -120,7 +120,7 @@ async fn test_pt_fixture_detects_portuguese_and_transcribes_recognizable_speech(
         .map(|s| s.expect("failed to read sample") as f32 / 32768.0)
         .collect();
 
-    let models_dir = std::env::temp_dir().join("polyvocal_integration_test_models");
+    let models_dir = std::env::temp_dir().join("polyvocal_pt_fixture_test_models");
     let manager = ModelManager::new(models_dir.clone());
     manager
         .download(&ModelSize::Tiny, &ReqwestDownloader)
@@ -205,7 +205,7 @@ async fn test_es_fixture_detects_spanish_and_transcribes_recognizable_speech() {
         .map(|s| s.expect("failed to read sample") as f32 / 32768.0)
         .collect();
 
-    let models_dir = std::env::temp_dir().join("polyvocal_integration_test_models");
+    let models_dir = std::env::temp_dir().join("polyvocal_es_fixture_test_models");
     let manager = ModelManager::new(models_dir.clone());
     manager
         .download(&ModelSize::Tiny, &ReqwestDownloader)
