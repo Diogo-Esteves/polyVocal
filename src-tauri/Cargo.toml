@@ -40,6 +40,7 @@ tokio = { version = "1", features = ["full"] }
 # Serialisation
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 
 # Audio capture (cross-platform microphone input)
 cpal = "0.15"
