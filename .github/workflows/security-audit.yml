@@ -47,4 +47,35 @@ jobs:
           #   RUSTSEC-2024-0437 (protobuf, via rust_tokenizers): only parses
           #     this repo's checksum-verified, pinned model files (#89), never
           #     untrusted network input. See #99.
-          ignore: RUSTSEC-2023-0071,RUSTSEC-2024-0437
+          #   RUSTSEC-2024-0413, RUSTSEC-2024-0416, RUSTSEC-2024-0412,
+          #   RUSTSEC-2024-0418, RUSTSEC-2024-0411, RUSTSEC-2024-0417,
+          #   RUSTSEC-2024-0419, RUSTSEC-2024-0420, RUSTSEC-2024-0415,
+          #   RUSTSEC-2024-0414 (atk, atk-sys, gdk, gdk-sys, gdkwayland-sys,
+          #     gdkx11, gdkx11-sys, gtk, gtk-sys, gtk3-macros — all
+          #     unmaintained): transitively pulled in by `muda` (tray/menu
+          #     crate), which is pulled in by `tauri` v2.11.5 itself for the
+          #     Linux tray icon — confirmed via `cargo tree -i gtk`. We're
+          #     already on the latest tauri (2.11.5) and muda (0.19.3); no
+          #     newer version drops the GTK3 dependency yet (upstream hasn't
+          #     migrated to GTK4). Not actionable from this repo. See #104,
+          #     #105, #106, #107, #108, #109, #110, #111, #112, #113.
+          #   RUSTSEC-2024-0429 (glib v0.18.5, unsound `Iterator`/
+          #     `DoubleEndedIterator` impls for `VariantStrIter`): same
+          #     transitive chain as the GTK3 group above (glib is gtk's
+          #     dependency). Not used directly by polyvocal code. See #121.
+          #   RUSTSEC-2024-0370 (proc-macro-error): pulled in via
+          #     `glib-macros` (part of the same GTK3/glib chain above),
+          #     confirmed via `cargo tree -i proc-macro-error`. See #114.
+          #   RUSTSEC-2025-0098, RUSTSEC-2025-0100, RUSTSEC-2025-0080,
+          #   RUSTSEC-2025-0075, RUSTSEC-2025-0081 (unic-ucd-version,
+          #     unic-ucd-ident, unic-common, unic-char-range,
+          #     unic-char-property — all unmaintained): transitively pulled in
+          #     via `urlpattern` ← `tauri-utils` ← `tauri` itself, confirmed
+          #     via `cargo tree -i unic-char-property`. Not actionable from
+          #     this repo. See #116, #117, #118, #119, #120.
+          #   RUSTSEC-2024-0436 (paste — unmaintained): pulled in via `gemm`
+          #     ← `candle-core` v0.11.0 (our ML/translation backend),
+          #     confirmed via `cargo tree -i paste`. We're already on the
+          #     latest candle-core (0.11.0); no newer release drops the
+          #     `paste` dependency yet. See #97.
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2024-0437,RUSTSEC-2024-0413,RUSTSEC-2024-0416,RUSTSEC-2024-0412,RUSTSEC-2024-0418,RUSTSEC-2024-0411,RUSTSEC-2024-0417,RUSTSEC-2024-0419,RUSTSEC-2024-0420,RUSTSEC-2024-0415,RUSTSEC-2024-0414,RUSTSEC-2024-0429,RUSTSEC-2024-0370,RUSTSEC-2025-0098,RUSTSEC-2025-0100,RUSTSEC-2025-0080,RUSTSEC-2025-0075,RUSTSEC-2025-0081,RUSTSEC-2024-0436
