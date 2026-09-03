@@ -1,7 +1,8 @@
 use tauri::{AppHandle, Manager};
 
 fn config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    Ok(app.path()
+    Ok(app
+        .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("config.toml"))
