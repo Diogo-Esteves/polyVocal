@@ -301,6 +301,13 @@ fn PolyVocalMark(#[prop(default = 24)] size: u32) -> impl IntoView {
     }
 }
 
+/// A dismissible toast notification in the stacking queue.
+#[derive(Clone)]
+struct Toast {
+    id: u32,
+    message: String,
+}
+
 /// The four record-button states from `../design/DESIGN.md` → *The Record
 /// Button*, each with its own ring colour, mark treatment, strand behaviour
 /// and label.
@@ -747,7 +754,7 @@ fn SessionList(
     sessions_loading: RwSignal<bool>,
     sessions_expanded: RwSignal<bool>,
     on_open: Callback<(String, web_sys::HtmlElement)>,
-    error_message: RwSignal<Option<String>>,
+    push_toast: Callback<String>,
 ) -> impl IntoView {
     // Only one card can be in the "confirm delete?" state at a time — mirrors
     // the session-detail sheet's own `pending_delete` signal.
@@ -811,12 +818,10 @@ fn SessionList(
                                                 card_pending_delete.set(None);
                                                 spawn_local(async move {
                                                     let args = DeleteSessionArgs { id: &id };
-                                                    match tauri_sys::core::invoke_result::<(), String>("delete_session", args).await {
-                                                        Ok(()) => {
-                                                            sessions.update(|list| list.retain(|s| s.id != id));
-                                                            error_message.set(None);
-                                                        }
-                                                        Err(e) => error_message.set(Some(e)),
+                                                    if let Err(e) = tauri_sys::core::invoke_result::<(), String>("delete_session", args).await {
+                                                        push_toast.run(e);
+                                                    } else {
+                                                        sessions.update(|list| list.retain(|s| s.id != id));
                                                     }
                                                 });
                                             } else {
@@ -865,7 +870,7 @@ fn SessionDetailSheet(
     invoker: Signal<Option<web_sys::HtmlElement>>,
     sessions: RwSignal<Vec<Session>>,
     default_target_lang: RwSignal<String>,
-    error_message: RwSignal<Option<String>>,
+    push_toast: Callback<String>,
 ) -> impl IntoView {
     let detail = RwSignal::new(None::<Session>);
     let loading = RwSignal::new(false);
@@ -910,8 +915,8 @@ fn SessionDetailSheet(
                             }
                             detail.set(Some(session));
                         }
-                        Ok(None) => error_message.set(Some("Session not found.".to_string())),
-                        Err(e) => error_message.set(Some(e)),
+                        Ok(None) => push_toast.run("Session not found.".to_string()),
+                        Err(e) => push_toast.run(e),
                     }
                     loading.set(false);
                 });
@@ -938,7 +943,6 @@ fn SessionDetailSheet(
             return;
         };
         translating.set(true);
-        error_message.set(None);
         spawn_local(async move {
             let args = TranslateArgs {
                 session_id: &id,
@@ -954,7 +958,7 @@ fn SessionDetailSheet(
                     });
                     view_mode.set(SessionView::Translated);
                 }
-                Err(e) => error_message.set(Some(e)),
+                Err(e) => push_toast.run(e),
             }
             translating.set(false);
         });
@@ -967,14 +971,11 @@ fn SessionDetailSheet(
         };
         spawn_local(async move {
             let args = ExportSessionTxtArgs { id: &id };
-            match tauri_sys::core::invoke_result::<Option<String>, String>(
-                "export_session_txt",
-                args,
-            )
-            .await
+            if let Err(e) =
+                tauri_sys::core::invoke_result::<Option<String>, String>("export_session_txt", args)
+                    .await
             {
-                Ok(_) => error_message.set(None),
-                Err(e) => error_message.set(Some(e)),
+                push_toast.run(e);
             }
         });
     };
@@ -986,14 +987,11 @@ fn SessionDetailSheet(
         };
         spawn_local(async move {
             let args = ExportSessionSrtArgs { id: &id };
-            match tauri_sys::core::invoke_result::<Option<String>, String>(
-                "export_session_srt",
-                args,
-            )
-            .await
+            if let Err(e) =
+                tauri_sys::core::invoke_result::<Option<String>, String>("export_session_srt", args)
+                    .await
             {
-                Ok(_) => error_message.set(None),
-                Err(e) => error_message.set(Some(e)),
+                push_toast.run(e);
             }
         });
     };
@@ -1026,7 +1024,7 @@ fn SessionDetailSheet(
                 }
                 Err(_) => {
                     menu_open.set(false);
-                    error_message.set(Some("Couldn't copy to clipboard.".to_string()));
+                    push_toast.run("Couldn't copy to clipboard.".to_string());
                 }
             }
         });
@@ -1040,12 +1038,13 @@ fn SessionDetailSheet(
             pending_delete.set(false);
             spawn_local(async move {
                 let args = DeleteSessionArgs { id: &id };
-                match tauri_sys::core::invoke_result::<(), String>("delete_session", args).await {
-                    Ok(()) => {
-                        sessions.update(|list| list.retain(|s| s.id != id));
-                        session_detail_id.set(None);
-                    }
-                    Err(e) => error_message.set(Some(e)),
+                if let Err(e) =
+                    tauri_sys::core::invoke_result::<(), String>("delete_session", args).await
+                {
+                    push_toast.run(e);
+                } else {
+                    sessions.update(|list| list.retain(|s| s.id != id));
+                    session_detail_id.set(None);
                 }
             });
         } else {
@@ -1185,7 +1184,19 @@ fn App() -> impl IntoView {
     });
     let transcript_lines = RwSignal::new(Vec::<String>::new());
     let detected_language = RwSignal::new(None::<String>);
-    let error_message = RwSignal::new(None::<String>);
+    let toasts = RwSignal::new(Vec::<Toast>::new());
+    let next_toast_id = RwSignal::new(0u32);
+    let push_toast = Callback::new(move |message: String| {
+        let id = next_toast_id.get_untracked();
+        next_toast_id.set(id + 1);
+        toasts.update(|t| t.push(Toast { id, message }));
+        set_timeout(
+            move || {
+                toasts.update(|t| t.retain(|toast| toast.id != id));
+            },
+            Duration::from_secs(6),
+        );
+    });
     let target_lang = RwSignal::new("pt".to_string());
     let settings_open = RwSignal::new(false);
     let history_open = RwSignal::new(false);
@@ -1215,7 +1226,7 @@ fn App() -> impl IntoView {
         spawn_local(async move {
             if let Err(e) = tauri_sys::core::invoke_result::<(), String>("set_config", (cfg,)).await
             {
-                error_message.set(Some(e));
+                push_toast.run(e);
             }
         });
     };
@@ -1261,7 +1272,7 @@ fn App() -> impl IntoView {
             match tauri_sys::event::listen::<TranscriptSegment>("transcript:segment").await {
                 Ok(stream) => stream,
                 Err(e) => {
-                    error_message.set(Some(format!("failed to listen for transcript events: {e}")));
+                    push_toast.run(format!("failed to listen for transcript events: {e}"));
                     return;
                 }
             };
@@ -1278,9 +1289,7 @@ fn App() -> impl IntoView {
         let mut events = match tauri_sys::event::listen::<AudioLevel>("audio:level").await {
             Ok(stream) => stream,
             Err(e) => {
-                error_message.set(Some(format!(
-                    "failed to listen for audio level events: {e}"
-                )));
+                push_toast.run(format!("failed to listen for audio level events: {e}"));
                 return;
             }
         };
@@ -1296,7 +1305,7 @@ fn App() -> impl IntoView {
         };
         match tauri_sys::core::invoke_result::<Vec<Session>, String>("list_sessions", args).await {
             Ok(list) => sessions.set(list),
-            Err(e) => error_message.set(Some(e)),
+            Err(e) => push_toast.run(e),
         }
         sessions_loading.set(false);
     });
@@ -1316,7 +1325,6 @@ fn App() -> impl IntoView {
             return;
         }
         busy.set(true);
-        error_message.set(None);
         spawn_local(async move {
             if recording.get_untracked() {
                 match tauri_sys::core::invoke_result::<String, String>("stop_recording", ()).await {
@@ -1350,7 +1358,7 @@ fn App() -> impl IntoView {
                             }
                         });
                     }
-                    Err(e) => error_message.set(Some(e)),
+                    Err(e) => push_toast.run(e),
                 }
             } else {
                 transcript_lines.set(Vec::new());
@@ -1361,7 +1369,7 @@ fn App() -> impl IntoView {
                 };
                 match tauri_sys::core::invoke_result::<(), String>("start_recording", args).await {
                     Ok(()) => recording.set(true),
-                    Err(e) => error_message.set(Some(e)),
+                    Err(e) => push_toast.run(e),
                 }
             }
             busy.set(false);
@@ -1405,7 +1413,7 @@ fn App() -> impl IntoView {
                     .await
                 {
                     Ok(list) => models.set(list),
-                    Err(e) => error_message.set(Some(e)),
+                    Err(e) => push_toast.run(e),
                 }
                 models_loading.set(false);
             });
@@ -1418,7 +1426,7 @@ fn App() -> impl IntoView {
                 .await
                 {
                     Ok(list) => translation_models.set(list),
-                    Err(e) => error_message.set(Some(e)),
+                    Err(e) => push_toast.run(e),
                 }
                 translation_models_loading.set(false);
             });
@@ -1431,7 +1439,7 @@ fn App() -> impl IntoView {
                 .await
                 {
                     Ok(list) => input_devices.set(list),
-                    Err(e) => error_message.set(Some(e)),
+                    Err(e) => push_toast.run(e),
                 }
                 devices_loading.set(false);
             });
@@ -1452,7 +1460,7 @@ fn App() -> impl IntoView {
                     sessions_loading=sessions_loading
                     sessions_expanded=sessions_expanded
                     on_open=on_open_session
-                    error_message=error_message
+                    push_toast=push_toast
                 />
             </aside>
         <main class="app">
@@ -1544,11 +1552,11 @@ fn App() -> impl IntoView {
                                                             spawn_local(async move {
                                                                 let args = DownloadTranslationModelArgs { language };
                                                                 if let Err(e) = tauri_sys::core::invoke_result::<(), String>("download_translation_model", args).await {
-                                                                    error_message.set(Some(e));
+                                                                    push_toast.run(e);
                                                                 }
                                                                 match tauri_sys::core::invoke_result::<Vec<LanguagePairInfo>, String>("list_translation_models", ()).await {
                                                                     Ok(list) => translation_models.set(list),
-                                                                    Err(e) => error_message.set(Some(e)),
+                                                                    Err(e) => push_toast.run(e),
                                                                 }
                                                                 downloading_language.set(None);
                                                             });
@@ -1585,11 +1593,11 @@ fn App() -> impl IntoView {
                                                             spawn_local(async move {
                                                                 let args = SetActiveModelArgs { size };
                                                                 if let Err(e) = tauri_sys::core::invoke_result::<(), String>("set_active_model", args).await {
-                                                                    error_message.set(Some(e));
+                                                                    push_toast.run(e);
                                                                 }
                                                                 match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ()).await {
                                                                     Ok(list) => models.set(list),
-                                                                    Err(e) => error_message.set(Some(e)),
+                                                                    Err(e) => push_toast.run(e),
                                                                 }
                                                             });
                                                         }
@@ -1607,11 +1615,11 @@ fn App() -> impl IntoView {
                                                             spawn_local(async move {
                                                                 let args = DownloadModelArgs { size };
                                                                 if let Err(e) = tauri_sys::core::invoke_result::<(), String>("download_model", args).await {
-                                                                    error_message.set(Some(e));
+                                                                    push_toast.run(e);
                                                                 }
                                                                 match tauri_sys::core::invoke_result::<Vec<ModelInfo>, String>("list_models", ()).await {
                                                                     Ok(list) => models.set(list),
-                                                                    Err(e) => error_message.set(Some(e)),
+                                                                    Err(e) => push_toast.run(e),
                                                                 }
                                                                 downloading_size.set(None);
                                                             });
@@ -1705,7 +1713,7 @@ fn App() -> impl IntoView {
                     sessions_loading=sessions_loading
                     sessions_expanded=sessions_expanded
                     on_open=on_open_session
-                    error_message=error_message
+                    push_toast=push_toast
                 />
             </Sheet>
 
@@ -1718,14 +1726,32 @@ fn App() -> impl IntoView {
                 invoker=Signal::derive(move || session_detail_invoker.get())
                 sessions=sessions
                 default_target_lang=target_lang
-                error_message=error_message
+                push_toast=push_toast
             />
 
-            {move || {
-                error_message.get().map(|msg| view! {
-                    <p class="error" role="alert"><TriangleAlert/> <span>{msg}</span></p>
-                })
-            }}
+            <div class="toast-stack">
+                <For
+                    each=move || toasts.get()
+                    key=|toast| toast.id
+                    children=move |toast| {
+                        let id = toast.id;
+                        view! {
+                            <p class="toast" role="alert">
+                                <TriangleAlert/>
+                                <span>{toast.message}</span>
+                                <button
+                                    type="button"
+                                    class="toast-dismiss"
+                                    aria-label="Dismiss"
+                                    on:click=move |_| toasts.update(|t| t.retain(|toast| toast.id != id))
+                                >
+                                    "×"
+                                </button>
+                            </p>
+                        }
+                    }
+                />
+            </div>
 
             // The record screen is always mounted underneath the sheets above
             // (`../design/DESIGN.md` → *Interaction Patterns · Sheets, not
