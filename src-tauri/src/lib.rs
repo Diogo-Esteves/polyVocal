@@ -1,5 +1,6 @@
 pub mod audio;
 mod commands;
+pub mod config;
 pub mod logging;
 pub mod models;
 mod storage;
@@ -49,6 +50,9 @@ pub fn run() {
             commands::models::list_models,
             commands::models::download_model,
             commands::models::set_active_model,
+            // Config
+            commands::config::get_config,
+            commands::config::set_config,
         ])
         .setup(|app| {
             // Blocking (not spawned): every #[tauri::command] that takes

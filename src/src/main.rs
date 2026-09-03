@@ -593,6 +593,13 @@ struct InputDevice {
     is_default: bool,
 }
 
+/// Mirrors `config::AppConfig` in the backend.
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct AppConfig {
+    input_device: Option<String>,
+    target_lang: Option<String>,
+}
+
 /// Every element type a keyboard user can land on, for the sheet's focus
 /// trap below. `:not([disabled])` matters — a disabled button is still
 /// matched by `button` alone but isn't reachable by Tab.
@@ -1199,6 +1206,20 @@ fn App() -> impl IntoView {
     // row's "Default" option) — same convention `StartRecordingArgs`
     // already used before this picker existed.
     let selected_device_id = RwSignal::new(None::<String>);
+
+    let persist_config = move || {
+        let cfg = AppConfig {
+            input_device: selected_device_id.get_untracked(),
+            target_lang: Some(target_lang.get_untracked()),
+        };
+        spawn_local(async move {
+            if let Err(e) = tauri_sys::core::invoke_result::<(), String>("set_config", (cfg,)).await
+            {
+                error_message.set(Some(e));
+            }
+        });
+    };
+
     let sessions = RwSignal::new(Vec::<Session>::new());
     let sessions_loading = RwSignal::new(true);
     // The session detail sheet (`../design/DESIGN.md` → *Key Screens ·
@@ -1278,6 +1299,16 @@ fn App() -> impl IntoView {
             Err(e) => error_message.set(Some(e)),
         }
         sessions_loading.set(false);
+    });
+
+    spawn_local(async move {
+        if let Ok(cfg) = tauri_sys::core::invoke_result::<AppConfig, String>("get_config", ()).await
+        {
+            selected_device_id.set(cfg.input_device);
+            if let Some(lang) = cfg.target_lang {
+                target_lang.set(lang);
+            }
+        }
     });
 
     let toggle_recording = move || {
@@ -1604,6 +1635,7 @@ fn App() -> impl IntoView {
                                     on:change=move |ev| {
                                         let value = event_target_value(&ev);
                                         selected_device_id.set(if value.is_empty() { None } else { Some(value) });
+                                        persist_config();
                                     }
                                 >
                                     <option value="">"Default"</option>
@@ -1748,7 +1780,10 @@ fn App() -> impl IntoView {
                         class="language-target"
                         aria-label="Translate into"
                         prop:value=move || target_lang.get()
-                        on:change=move |ev| target_lang.set(event_target_value(&ev))
+                        on:change=move |ev| {
+                            target_lang.set(event_target_value(&ev));
+                            persist_config();
+                        }
                     >
                         {TARGET_LANGUAGES
                             .iter()

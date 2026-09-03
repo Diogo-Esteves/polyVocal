@@ -3,6 +3,7 @@
 /// Each submodule maps to a domain and exposes `#[tauri::command]` functions
 /// that the frontend calls via `invoke()`.
 pub mod audio;
+pub mod config;
 pub mod models;
 pub mod storage;
 pub mod translation;
