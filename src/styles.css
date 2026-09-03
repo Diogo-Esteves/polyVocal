@@ -752,11 +752,26 @@ select:focus-visible {
   font-size: 0.85rem;
 }
 
-.error {
+.toast-stack {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  width: min(90vw, 32rem);
+  pointer-events: none;
+}
+
+.toast {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.5rem;
-  /* Errors are one-liners in practice; the cap is what keeps a stack trace
+  /* Toasts are one-liners in practice; the cap is what keeps a stack trace
    * from a failed command from pushing the action bar off the bottom. Capped,
    * so it never needs to shrink — the transcript absorbs the flex instead.
    * `min-width: 0` overrides the flex item's default `auto`, which sizes to
@@ -774,6 +789,19 @@ select:focus-visible {
   background: var(--color-danger-bg);
   border-radius: var(--radius-sm);
   padding: 0.6rem 0.75rem;
+  width: 100%;
+  pointer-events: auto;
+}
+
+.toast-dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  flex: 0 0 auto;
 }
 
 select {
