@@ -3,6 +3,7 @@ use futures_util::StreamExt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 
 /// Downloads a URL's content to a destination file path, verifying it
 /// matches `expected_sha256` before it's left on disk for anything else to
@@ -41,6 +42,16 @@ fn verify_sha256(bytes: &[u8], expected_sha256: &str) -> Result<()> {
     Ok(())
 }
 
+/// Derives a unique temporary path for a download destination, appending a
+/// UUID v4 before `.part` (e.g. `dest.<uuid>.part`). This ensures concurrent
+/// downloads of the same `dest` don't clobber each other's temp files during
+/// the streaming phase — fixing issue #155.
+fn tmp_path_for(dest: &Path) -> PathBuf {
+    let mut tmp_name = dest.as_os_str().to_owned();
+    tmp_name.push(format!(".{}.part", Uuid::new_v4()));
+    PathBuf::from(tmp_name)
+}
+
 /// Streams a URL's response body directly to disk, without buffering the
 /// whole file in memory — model files range from megabytes to gigabytes.
 #[derive(Debug, Default, Clone, Copy)]
@@ -55,11 +66,11 @@ impl ModelDownloader for ReqwestDownloader {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        // Write to a `.part` file and rename on success, so a failed or
-        // interrupted download never leaves a corrupt file at `dest`.
-        let mut tmp_name = dest.as_os_str().to_owned();
-        tmp_name.push(".part");
-        let tmp_dest = PathBuf::from(tmp_name);
+        // Write to a unique `.part` file and rename on success, so a failed or
+        // interrupted download never leaves a corrupt file at `dest`. The unique
+        // UUID prevents concurrent downloads of the same `dest` from clobbering
+        // each other's temp files — see issue #155.
+        let tmp_dest = tmp_path_for(dest);
 
         let mut file = tokio::fs::File::create(&tmp_dest).await?;
         while let Some(chunk) = stream.next().await {
@@ -72,6 +83,15 @@ impl ModelDownloader for ReqwestDownloader {
         if let Err(e) = verify_sha256(&bytes, expected_sha256) {
             tokio::fs::remove_file(&tmp_dest).await.ok();
             return Err(e);
+        }
+
+        // If `dest` already exists at this point, a concurrent caller already
+        // won the race and renamed its own verified download into place. Since
+        // our bytes are also verified against the same `expected_sha256`, we
+        // can safely discard this call's temp file and return success.
+        if dest.exists() {
+            tokio::fs::remove_file(&tmp_dest).await.ok();
+            return Ok(());
         }
 
         tokio::fs::rename(&tmp_dest, dest).await?;
@@ -122,5 +142,26 @@ mod tests {
         let bytes = b"test content";
         let wrong = "0".repeat(64);
         assert!(verify_sha256(bytes, &wrong).is_err());
+    }
+
+    #[test]
+    fn test_tmp_path_for_uniqueness() {
+        let dest = Path::new("/tmp/models/my_model.bin");
+
+        // Two calls to tmp_path_for with the same dest should produce different paths
+        let tmp1 = tmp_path_for(dest);
+        let tmp2 = tmp_path_for(dest);
+        assert_ne!(
+            tmp1, tmp2,
+            "tmp_path_for should generate unique paths for concurrent calls"
+        );
+
+        // Both temp paths should live in the same parent directory as dest
+        assert_eq!(tmp1.parent(), dest.parent());
+        assert_eq!(tmp2.parent(), dest.parent());
+
+        // Both temp paths should end with .part
+        assert!(tmp1.to_string_lossy().ends_with(".part"));
+        assert!(tmp2.to_string_lossy().ends_with(".part"));
     }
 }
