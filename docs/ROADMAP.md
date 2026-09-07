@@ -42,6 +42,14 @@
       session's `⋯` menu (session detail view, #74). DOCX not started — see
       `src-tauri/src/commands/storage.rs`)*
 - [ ] Global hotkey — trigger recording from any app (opt-in)
+- [ ] System-wide dictation mode — global hotkey starts/stops capture from
+      any focused app (not just polyVocal's own window) and injects the
+      transcribed text directly into the focused field, with clipboard-paste
+      as a fallback when direct injection isn't available; requires
+      accessibility/automation permissions per OS (macOS Accessibility API,
+      Windows `SetWindowsHookEx`, Linux AT-SPI). Builds on the global hotkey
+      item above but is a distinct capability (recording trigger vs. text
+      delivery). See #161.
 - [ ] API / integrations
 
 ---
