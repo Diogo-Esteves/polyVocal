@@ -28,7 +28,7 @@ use components::mark::PolyVocalMark;
 use components::session_detail::SessionDetailSheet;
 use components::session_list::SessionList;
 use components::sheet::Sheet;
-use format::{format_elapsed, language_label, TARGET_LANGUAGES};
+use format::{format_elapsed, language_label, truncate_to_last_words, TARGET_LANGUAGES};
 use icons::{History, Languages, Settings, TriangleAlert};
 use shortcuts::{apply_record_shortcut, stored_record_shortcut, RecordShortcutKey};
 use theme::{apply_theme_mode, stored_theme_mode, ThemeMode};
@@ -116,6 +116,7 @@ fn App() -> impl IntoView {
     });
     let transcript_lines = RwSignal::new(Vec::<String>::new());
     let detected_language = RwSignal::new(None::<String>);
+    let partial_text = RwSignal::new(String::new());
     let toasts = RwSignal::new(Vec::<Toast>::new());
     let next_toast_id = RwSignal::new(0u32);
     let push_toast = Callback::new(move |message: String| {
@@ -188,6 +189,7 @@ fn App() -> impl IntoView {
     let transcript_ref = NodeRef::<leptos::html::Section>::new();
     Effect::new(move |_| {
         transcript_lines.track();
+        partial_text.track();
         let Some(element) = transcript_ref.get() else {
             return;
         };
@@ -213,11 +215,12 @@ fn App() -> impl IntoView {
             let segment = event.payload;
             transcript_lines.update(|lines| lines.push(segment.text));
             detected_language.set(Some(segment.language));
+            partial_text.set(String::new());
         }
     });
 
-    // Listen for streaming partial transcriptions (#165, slice 2). For now,
-    // partials are received but not rendered — UI rendering is slice 3 (#167).
+    // Listen for streaming partial transcriptions (#165, slice 2). Render partials
+    // to the UI in the provisional tail below the committed lines (#167).
     spawn_local(async move {
         let mut events =
             match tauri_sys::event::listen::<TranscriptPartial>("transcript:partial").await {
@@ -229,8 +232,8 @@ fn App() -> impl IntoView {
                     return;
                 }
             };
-        while let Some(_event) = events.next().await {
-            // TODO (#167): render partials to the UI
+        while let Some(event) = events.next().await {
+            partial_text.set(event.payload.provisional);
         }
     });
 
@@ -300,6 +303,7 @@ fn App() -> impl IntoView {
             } else {
                 transcript_lines.set(Vec::new());
                 detected_language.set(None);
+                partial_text.set(String::new());
                 session_detail_id.set(None);
                 match start_recording(selected_device_id.get_untracked()).await {
                     Ok(()) => recording.set(true),
@@ -704,19 +708,32 @@ fn App() -> impl IntoView {
             >
                 {move || {
                     let lines = transcript_lines.get();
-                    if lines.is_empty() {
-                        // One line, and nothing else. No cards, no tips.
+                    let partial = partial_text.get();
+                    if lines.is_empty() && partial.is_empty() {
                         view! {
                             <p class="transcript-empty">"Tap the brush and start talking."</p>
                         }.into_any()
                     } else {
                         view! {
-                            <div class="transcript-lines">
-                                {lines
-                                    .into_iter()
-                                    .map(|line| view! { <p>{line}</p> })
-                                    .collect_view()}
-                            </div>
+                            <>
+                                {(!lines.is_empty()).then(|| {
+                                    view! {
+                                        <div class="transcript-lines">
+                                            {lines
+                                                .into_iter()
+                                                .map(|line| view! { <p>{line}</p> })
+                                                .collect_view()}
+                                        </div>
+                                    }
+                                })}
+                                {(!partial.is_empty()).then(|| {
+                                    view! {
+                                        <p class="transcript-provisional">
+                                            {truncate_to_last_words(&partial, 30)}
+                                        </p>
+                                    }
+                                })}
+                            </>
                         }.into_any()
                     }
                 }}
@@ -811,7 +828,7 @@ fn main() {
 // runner needed for logic this pure.
 #[cfg(test)]
 mod tests {
-    use crate::format::truncate_preview;
+    use crate::format::{truncate_preview, truncate_to_last_words};
     use crate::shortcuts::RecordShortcutKey;
     use crate::theme::ThemeMode;
 
@@ -867,5 +884,33 @@ mod tests {
     fn truncate_preview_at_exactly_the_limit_is_not_truncated() {
         let transcript = "a".repeat(80);
         assert_eq!(truncate_preview(&transcript, 80), transcript);
+    }
+
+    #[test]
+    fn truncate_to_last_words_passes_short_text_through_unchanged() {
+        assert_eq!(truncate_to_last_words("hello world", 30), "hello world");
+    }
+
+    #[test]
+    fn truncate_to_last_words_keeps_only_the_last_n_words() {
+        let text = "one two three four five";
+        assert_eq!(truncate_to_last_words(text, 2), "four five");
+    }
+
+    #[test]
+    fn truncate_to_last_words_at_exactly_the_limit_is_not_truncated() {
+        let text = "one two three";
+        assert_eq!(truncate_to_last_words(text, 3), text);
+    }
+
+    #[test]
+    fn truncate_to_last_words_handles_empty_string() {
+        assert_eq!(truncate_to_last_words("", 30), "");
+    }
+
+    #[test]
+    fn truncate_to_last_words_with_extra_whitespace() {
+        let text = "one  two   three    four";
+        assert_eq!(truncate_to_last_words(text, 2), "three four");
     }
 }

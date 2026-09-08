@@ -61,6 +61,19 @@ pub fn truncate_preview(transcript: &str, max_chars: usize) -> String {
     }
 }
 
+/// Keeps only the last `max_words` words from `text`. If the text has fewer
+/// words than `max_words`, returns it unchanged. Used to render the
+/// in-progress partial transcription tail without visual explosion from
+/// Whisper hallucination loops.
+pub fn truncate_to_last_words(text: &str, max_words: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() <= max_words {
+        text.to_string()
+    } else {
+        words[words.len() - max_words..].join(" ")
+    }
+}
+
 /// MVP language pairs, matching `translation::SUPPORTED_LANGUAGES` in the backend.
 pub const TARGET_LANGUAGES: [(&str, &str); 3] =
     [("en", "English"), ("pt", "Portuguese"), ("es", "Spanish")];

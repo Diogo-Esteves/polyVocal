@@ -725,6 +725,13 @@ select:focus-visible {
   margin-bottom: 0;
 }
 
+.transcript-provisional {
+  margin: 0 0 var(--space-3);
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 /* Empty state: one centred line, and nothing else. */
 .transcript-empty {
   display: flex;
