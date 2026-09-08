@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct AppConfig {
     pub input_device: Option<String>,
     pub target_lang: Option<String>,
+    pub streaming_partials_enabled: bool,
 }
 
 /// Retrieves the current application configuration.

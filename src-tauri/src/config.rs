@@ -9,6 +9,8 @@ pub struct AppConfig {
     pub input_device: Option<String>,
     /// Default target language for translation.
     pub target_lang: Option<String>,
+    /// Enable streaming partial transcriptions (real-time text while speaking).
+    pub streaming_partials_enabled: bool,
 }
 
 /// Loads configuration from the given path. Returns `AppConfig::default()` if
@@ -65,6 +67,7 @@ mod tests {
         let original = AppConfig {
             input_device: Some("device_123".to_string()),
             target_lang: Some("en".to_string()),
+            streaming_partials_enabled: true,
         };
 
         save(&path, &original).unwrap();
