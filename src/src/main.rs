@@ -217,12 +217,18 @@ fn App() -> impl IntoView {
     // Listen for streaming partial transcriptions (#165, slice 2). For now,
     // partials are received but not rendered — UI rendering is slice 3 (#167).
     spawn_local(async move {
-        if let Ok(mut events) =
-            tauri_sys::event::listen::<TranscriptPartial>("transcript:partial").await
-        {
-            while let Some(_event) = events.next().await {
-                // TODO (#167): render partials to the UI
-            }
+        let mut events =
+            match tauri_sys::event::listen::<TranscriptPartial>("transcript:partial").await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    push_toast.run(format!(
+                        "failed to listen for partial transcript events: {e}"
+                    ));
+                    return;
+                }
+            };
+        while let Some(_event) = events.next().await {
+            // TODO (#167): render partials to the UI
         }
     });
 
