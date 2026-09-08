@@ -148,27 +148,6 @@ fn should_skip_streaming_tick(queue_tx: &mpsc::Sender<ClosedSegment>) -> bool {
     queue_tx.capacity() < SEGMENT_QUEUE_CAPACITY
 }
 
-/// Load a Tiny engine for streaming partials if the feature is enabled.
-/// The `load` closure is injected to allow unit testing without real model weights.
-fn resolve_streaming_engine<E, F>(enabled: bool, load: F) -> Option<E>
-where
-    F: FnOnce() -> Result<E, String>,
-{
-    if !enabled {
-        return None;
-    }
-    match load() {
-        Ok(engine) => {
-            tracing::info!("loaded Tiny engine for streaming partials");
-            Some(engine)
-        }
-        Err(e) => {
-            tracing::warn!("failed to load Tiny engine for streaming partials: {e}");
-            None
-        }
-    }
-}
-
 /// Drop/backlog counters surfaced once at session end (#144 item 8) — a
 /// single structured `tracing` line, local log only, no telemetry upload
 /// (this app's privacy-first design).
@@ -365,6 +344,12 @@ async fn start_recording_inner(
         .map(|info| info.size)
         .collect();
 
+    // Decode calibration audio once, to be reused by both the session-tier
+    // calibration walk and the streaming partials fast-pass gate below.
+    // The audio is a Vec<f32> of ~1.9MB — cloning it once is cheaper than
+    // decoding the embedded WAV fixture twice.
+    let pcm = calibration::calibration_pcm().map_err(|e| e.to_string())?;
+
     // One-shot startup calibration (#144 Phase 2): measure real RTF on this
     // machine at the user's chosen tier (never upgraded past it — that
     // choice is a quality ceiling) and, if it can't keep up live, walk down
@@ -378,7 +363,7 @@ async fn start_recording_inner(
     // (up to a minute long) duration.
     let (engine, default_strategy) = {
         let manager = manager.clone();
-        let pcm = calibration::calibration_pcm().map_err(|e| e.to_string())?;
+        let pcm = pcm.clone();
         tokio::task::spawn_blocking(
             move || -> Result<(Arc<TranscriptionEngine>, DecodeStrategy), String> {
                 Ok(select_engine_and_strategy(
@@ -402,41 +387,46 @@ async fn start_recording_inner(
         .map_err(|e| format!("calibration task panicked: {e}"))??
     };
 
-    // Load a second Tiny engine for streaming partials if enabled. Kept separate
-    // from the session engine (which may be any tier) per design§3: the session
-    // tier is a quality ceiling; partials are provisional and about to be replaced,
-    // so always using Tiny+Greedy for speed on all tiers is strictly correct.
-    // Additionally, gate on hardware capability: even if the user opted in, if this
-    // machine is too slow to keep the streaming tick loop's fast pass under budget,
-    // silently disable partials for this session rather than pay the CPU cost for
-    // badly-lagged text.
+    // Load a Tiny engine for streaming partials if enabled and if the machine
+    // can keep up. Kept separate from the session engine (which may be any tier)
+    // per design§3: the session tier is a quality ceiling; partials are
+    // provisional and about to be replaced, so always using Tiny+Greedy for
+    // speed on all tiers is strictly correct. Additionally, gate on hardware
+    // capability: even if the user opted in, if this machine is too slow to keep
+    // the streaming tick loop's fast pass under budget, silently disable partials
+    // for this session rather than pay the CPU cost for badly-lagged text. The
+    // Tiny engine is loaded once and reused directly if the RTF check passes,
+    // rather than loading it twice.
     let config = crate::commands::config::get_config(app.clone()).await?;
-    let streaming_effectively_enabled = if config.streaming_partials_enabled {
+    let streaming_engine: Option<Arc<TranscriptionEngine>> = if config.streaming_partials_enabled {
         let manager = manager.clone();
-        tokio::task::spawn_blocking(move || -> Result<bool, String> {
-            let pcm = calibration::calibration_pcm().map_err(|e| e.to_string())?;
-            Ok(calibration::streaming_partials_keep_up(|| {
-                let engine = TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny))?;
+        let pcm = pcm.clone();
+        tokio::task::spawn_blocking(
+            move || -> Result<Option<Arc<TranscriptionEngine>>, String> {
+                let engine = TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny))
+                    .map_err(|e| e.to_string())?;
                 let options = DecodeOptions {
                     strategy: DecodeStrategy::Greedy,
                     ..DecodeOptions::default()
                 };
-                let start = std::time::Instant::now();
-                engine.transcribe(&pcm, &options)?;
-                Ok(start.elapsed().as_secs_f64() / calibration::CALIBRATION_AUDIO_SECS)
-            }))
-        })
+                let keeps_up = calibration::streaming_partials_keep_up(|| {
+                    let start = std::time::Instant::now();
+                    engine.transcribe(&pcm, &options)?;
+                    Ok(start.elapsed().as_secs_f64() / calibration::CALIBRATION_AUDIO_SECS)
+                });
+                if keeps_up {
+                    tracing::info!("loaded Tiny engine for streaming partials");
+                    Ok(Some(Arc::new(engine)))
+                } else {
+                    Ok(None)
+                }
+            },
+        )
         .await
         .map_err(|e| format!("streaming calibration task panicked: {e}"))??
     } else {
-        false
+        None
     };
-    let streaming_engine: Option<Arc<TranscriptionEngine>> =
-        resolve_streaming_engine(streaming_effectively_enabled, || {
-            TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny))
-                .map(Arc::new)
-                .map_err(|e| e.to_string())
-        });
 
     // Doesn't auto-download — VAD model must already be fetched via Settings,
     // same as the Whisper model above.
@@ -866,33 +856,6 @@ mod streaming_window_tests {
         tx.try_send(segment).expect("queue should have room");
 
         assert!(should_skip_streaming_tick(&tx));
-    }
-
-    #[test]
-    fn test_resolve_streaming_engine_disabled_returns_none() {
-        let loader_called = std::cell::Cell::new(false);
-        let result: Option<&str> = resolve_streaming_engine(false, || {
-            loader_called.set(true);
-            Ok("engine")
-        });
-        assert!(result.is_none());
-        assert!(
-            !loader_called.get(),
-            "loader should not be called when disabled"
-        );
-    }
-
-    #[test]
-    fn test_resolve_streaming_engine_enabled_ok_returns_some() {
-        let result: Option<&str> = resolve_streaming_engine(true, || Ok("test-engine"));
-        assert_eq!(result, Some("test-engine"));
-    }
-
-    #[test]
-    fn test_resolve_streaming_engine_enabled_err_returns_none() {
-        let result: Option<&str> =
-            resolve_streaming_engine(true, || Err("load failed".to_string()));
-        assert!(result.is_none());
     }
 }
 
