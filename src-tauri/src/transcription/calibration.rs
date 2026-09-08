@@ -129,6 +129,30 @@ where
     }
 }
 
+/// Whether the Tiny/Greedy "fast pass" streaming partials rely on can hold
+/// its own tick cadence on this machine. Reuses `RTF_KEEP_UP_THRESHOLD`'s
+/// same headroom reasoning as the main calibration walk: if even the
+/// fastest tier/strategy combination this app has can't keep up, partials
+/// would only ever show badly-lagged text, so the caller should disable
+/// them for this session rather than pay the ongoing CPU cost for no
+/// benefit. `measure` mirrors `calibrate`'s `measure` parameter — run (or
+/// fake, in tests) a real timed Tiny/Greedy transcription and return its
+/// RTF; an `Err` is logged and treated as "can't keep up" so a measurement
+/// failure degrades to "no partials this session" rather than failing the
+/// whole recording.
+pub fn streaming_partials_keep_up<M>(measure: M) -> bool
+where
+    M: FnOnce() -> anyhow::Result<Rtf>,
+{
+    match measure() {
+        Ok(rtf) => rtf <= RTF_KEEP_UP_THRESHOLD,
+        Err(e) => {
+            tracing::warn!("streaming partials fast-pass measurement failed: {e}");
+            false
+        }
+    }
+}
+
 /// The same JFK speech fixture the pipeline integration test transcribes
 /// (`fixtures/jfk.wav`) is embedded here as calibration audio — real
 /// continuous speech, not silence, so the *decoder's* cost (which scales
@@ -300,5 +324,30 @@ mod tests {
             rms > 0.01,
             "calibration audio should contain real speech, rms={rms}"
         );
+    }
+
+    #[test]
+    fn test_streaming_partials_keep_up_returns_true_when_rtf_is_under_threshold() {
+        let result = streaming_partials_keep_up(|| Ok(0.5));
+        assert!(result);
+    }
+
+    #[test]
+    fn test_streaming_partials_keep_up_returns_true_when_rtf_equals_threshold() {
+        let result = streaming_partials_keep_up(|| Ok(RTF_KEEP_UP_THRESHOLD));
+        assert!(result);
+    }
+
+    #[test]
+    fn test_streaming_partials_keep_up_returns_false_when_rtf_is_over_threshold() {
+        let result = streaming_partials_keep_up(|| Ok(0.9));
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_streaming_partials_keep_up_returns_false_and_logs_on_measurement_error() {
+        let result =
+            streaming_partials_keep_up(|| Err(anyhow::anyhow!("simulated measurement failure")));
+        assert!(!result);
     }
 }
