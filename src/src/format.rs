@@ -74,6 +74,23 @@ pub fn truncate_to_last_words(text: &str, max_words: usize) -> String {
     }
 }
 
+/// Combines the accumulated committed text with the provisional tail for
+/// display in the live partial transcription line. Accumulated committed is
+/// the accumulated deltas from previous ticks; provisional is the latest
+/// unstable tail. Returns a single string suitable for rendering, with words
+/// joined by spaces and extra whitespace normalized.
+pub fn combine_partial_lines(accumulated_committed: &str, provisional: &str) -> String {
+    let committed_trimmed = accumulated_committed.trim();
+    let provisional_trimmed = provisional.trim();
+
+    match (committed_trimmed.is_empty(), provisional_trimmed.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => provisional_trimmed.to_string(),
+        (false, true) => committed_trimmed.to_string(),
+        (false, false) => format!("{committed_trimmed} {provisional_trimmed}"),
+    }
+}
+
 /// MVP language pairs, matching `translation::SUPPORTED_LANGUAGES` in the backend.
 pub const TARGET_LANGUAGES: [(&str, &str); 3] =
     [("en", "English"), ("pt", "Portuguese"), ("es", "Spanish")];
