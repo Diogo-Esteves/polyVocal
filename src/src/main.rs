@@ -28,7 +28,9 @@ use components::mark::PolyVocalMark;
 use components::session_detail::SessionDetailSheet;
 use components::session_list::SessionList;
 use components::sheet::Sheet;
-use format::{format_elapsed, language_label, truncate_to_last_words, TARGET_LANGUAGES};
+use format::{
+    combine_partial_lines, format_elapsed, language_label, truncate_to_last_words, TARGET_LANGUAGES,
+};
 use icons::{History, Languages, Settings, TriangleAlert};
 use shortcuts::{apply_record_shortcut, stored_record_shortcut, RecordShortcutKey};
 use theme::{apply_theme_mode, stored_theme_mode, ThemeMode};
@@ -117,6 +119,7 @@ fn App() -> impl IntoView {
     let transcript_lines = RwSignal::new(Vec::<String>::new());
     let detected_language = RwSignal::new(None::<String>);
     let partial_text = RwSignal::new(String::new());
+    let partial_committed = RwSignal::new(String::new());
     let toasts = RwSignal::new(Vec::<Toast>::new());
     let next_toast_id = RwSignal::new(0u32);
     let push_toast = Callback::new(move |message: String| {
@@ -216,6 +219,7 @@ fn App() -> impl IntoView {
             transcript_lines.update(|lines| lines.push(segment.text));
             detected_language.set(Some(segment.language));
             partial_text.set(String::new());
+            partial_committed.set(String::new());
         }
     });
 
@@ -233,7 +237,18 @@ fn App() -> impl IntoView {
                 }
             };
         while let Some(event) = events.next().await {
-            partial_text.set(event.payload.provisional);
+            let payload = event.payload;
+            if !payload.committed.is_empty() {
+                partial_committed.update(|c| {
+                    if !c.is_empty() {
+                        c.push(' ');
+                    }
+                    c.push_str(&payload.committed);
+                });
+            }
+            let committed_so_far = partial_committed.get_untracked();
+            let combined = combine_partial_lines(&committed_so_far, &payload.provisional);
+            partial_text.set(combined);
         }
     });
 
@@ -304,6 +319,7 @@ fn App() -> impl IntoView {
                 transcript_lines.set(Vec::new());
                 detected_language.set(None);
                 partial_text.set(String::new());
+                partial_committed.set(String::new());
                 session_detail_id.set(None);
                 match start_recording(selected_device_id.get_untracked()).await {
                     Ok(()) => recording.set(true),
@@ -828,7 +844,7 @@ fn main() {
 // runner needed for logic this pure.
 #[cfg(test)]
 mod tests {
-    use crate::format::{truncate_preview, truncate_to_last_words};
+    use crate::format::{combine_partial_lines, truncate_preview, truncate_to_last_words};
     use crate::shortcuts::RecordShortcutKey;
     use crate::theme::ThemeMode;
 
@@ -912,5 +928,44 @@ mod tests {
     fn truncate_to_last_words_with_extra_whitespace() {
         let text = "one  two   three    four";
         assert_eq!(truncate_to_last_words(text, 2), "three four");
+    }
+
+    #[test]
+    fn combine_partial_lines_with_only_provisional() {
+        assert_eq!(combine_partial_lines("", "hello world"), "hello world");
+    }
+
+    #[test]
+    fn combine_partial_lines_with_only_committed() {
+        assert_eq!(combine_partial_lines("hello world", ""), "hello world");
+    }
+
+    #[test]
+    fn combine_partial_lines_with_both_committed_and_provisional() {
+        assert_eq!(
+            combine_partial_lines("hello world", "my friend"),
+            "hello world my friend"
+        );
+    }
+
+    #[test]
+    fn combine_partial_lines_with_both_empty() {
+        assert_eq!(combine_partial_lines("", ""), "");
+    }
+
+    #[test]
+    fn combine_partial_lines_trims_whitespace() {
+        assert_eq!(
+            combine_partial_lines("  hello world  ", "  my friend  "),
+            "hello world my friend"
+        );
+    }
+
+    #[test]
+    fn combine_partial_lines_with_multiple_committed_deltas() {
+        let mut accumulated = String::new();
+        accumulated.push_str("hello ");
+        accumulated.push_str("world ");
+        assert_eq!(combine_partial_lines(&accumulated, "my"), "hello world my");
     }
 }
