@@ -406,9 +406,33 @@ async fn start_recording_inner(
     // from the session engine (which may be any tier) per design§3: the session
     // tier is a quality ceiling; partials are provisional and about to be replaced,
     // so always using Tiny+Greedy for speed on all tiers is strictly correct.
+    // Additionally, gate on hardware capability: even if the user opted in, if this
+    // machine is too slow to keep the streaming tick loop's fast pass under budget,
+    // silently disable partials for this session rather than pay the CPU cost for
+    // badly-lagged text.
     let config = crate::commands::config::get_config(app.clone()).await?;
+    let streaming_effectively_enabled = if config.streaming_partials_enabled {
+        let manager = manager.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let pcm = calibration::calibration_pcm().map_err(|e| e.to_string())?;
+            Ok(calibration::streaming_partials_keep_up(|| {
+                let engine = TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny))?;
+                let options = DecodeOptions {
+                    strategy: DecodeStrategy::Greedy,
+                    ..DecodeOptions::default()
+                };
+                let start = std::time::Instant::now();
+                engine.transcribe(&pcm, &options)?;
+                Ok(start.elapsed().as_secs_f64() / calibration::CALIBRATION_AUDIO_SECS)
+            }))
+        })
+        .await
+        .map_err(|e| format!("streaming calibration task panicked: {e}"))??
+    } else {
+        false
+    };
     let streaming_engine: Option<Arc<TranscriptionEngine>> =
-        resolve_streaming_engine(config.streaming_partials_enabled, || {
+        resolve_streaming_engine(streaming_effectively_enabled, || {
             TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny))
                 .map(Arc::new)
                 .map_err(|e| e.to_string())
