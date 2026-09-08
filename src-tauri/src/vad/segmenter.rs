@@ -107,6 +107,16 @@ impl<V: VoiceActivityScorer> SpeechSegmenter<V> {
         Some(self.close_segment())
     }
 
+    /// Returns the in-progress buffer when currently in speech, `None` otherwise.
+    /// Used by streaming transcription to re-transcribe the utterance in progress.
+    pub fn in_progress(&self) -> Option<&[f32]> {
+        if self.in_speech {
+            Some(&self.buffer)
+        } else {
+            None
+        }
+    }
+
     fn close_segment(&mut self) -> SpeechSegment {
         self.in_speech = false;
         self.silence_run = 0;
@@ -272,5 +282,46 @@ mod tests {
 
         // The segmenter should be ready to start a fresh segment immediately.
         assert_eq!(segmenter.flush(), None);
+    }
+
+    #[test]
+    fn test_in_progress_returns_buffer_when_in_speech() {
+        // Start with silence, then speech; in_progress should return None before
+        // speech starts and Some(&buffer) while it's in progress.
+        let scores = vec![0.0, 0.9, 0.9, 0.0, 0.0];
+        let scorer = ScriptedScorer::new(scores);
+        let mut segmenter = SpeechSegmenter::new(scorer, 0.5, 2, 100);
+
+        let frame = vec![1.0f32; 4];
+
+        // Before speech: in_progress is None
+        assert!(segmenter.in_progress().is_none());
+        segmenter.push(&frame).unwrap(); // silence
+
+        // Still no speech
+        assert!(segmenter.in_progress().is_none());
+
+        // First speech frame
+        segmenter.push(&frame).unwrap();
+        let in_prog = segmenter.in_progress();
+        assert!(in_prog.is_some());
+        assert_eq!(in_prog.unwrap().len(), 4); // 1 frame * 4 samples
+
+        // Second speech frame
+        segmenter.push(&frame).unwrap();
+        let in_prog = segmenter.in_progress();
+        assert!(in_prog.is_some());
+        assert_eq!(in_prog.unwrap().len(), 8); // 2 frames * 4 samples
+
+        // First silence frame (starts hangover)
+        segmenter.push(&frame).unwrap();
+        let in_prog = segmenter.in_progress();
+        assert!(in_prog.is_some());
+        assert_eq!(in_prog.unwrap().len(), 12); // 3 frames (2 speech + 1 silence) * 4 samples
+
+        // Second silence frame closes the segment (hangover = 2)
+        segmenter.push(&frame).unwrap();
+        // Segment is closed now, so in_progress should be None
+        assert!(segmenter.in_progress().is_none());
     }
 }

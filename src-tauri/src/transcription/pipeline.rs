@@ -90,6 +90,12 @@ impl<V: VoiceActivityScorer> RecordingPipeline<V> {
     pub fn account_for_dropped_samples(&mut self, dropped: usize) {
         self.samples_seen += dropped;
     }
+
+    /// Returns the in-progress buffer when currently in speech, `None` otherwise.
+    /// Used by streaming transcription to re-transcribe the utterance in progress.
+    pub fn in_progress(&self) -> Option<&[f32]> {
+        self.segmenter.in_progress()
+    }
 }
 
 #[cfg(test)]
