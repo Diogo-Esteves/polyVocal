@@ -406,8 +406,7 @@ async fn start_recording_inner(
     // from the session engine (which may be any tier) per design§3: the session
     // tier is a quality ceiling; partials are provisional and about to be replaced,
     // so always using Tiny+Greedy for speed on all tiers is strictly correct.
-    let config_path = crate::commands::config::config_path(&app).map_err(|e| e.to_string())?;
-    let config = crate::config::load(&config_path);
+    let config = crate::commands::config::get_config(app.clone()).await?;
     let streaming_engine: Option<Arc<TranscriptionEngine>> =
         resolve_streaming_engine(config.streaming_partials_enabled, || {
             TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny))

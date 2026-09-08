@@ -1,6 +1,6 @@
 use tauri::{AppHandle, Manager};
 
-pub(crate) fn config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+fn config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(app
         .path()
         .app_data_dir()

@@ -4,6 +4,7 @@ use tracing::warn;
 
 /// Application settings persisted to `config.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     /// Selected input device ID, or `None` to use the system default.
     pub input_device: Option<String>,
@@ -82,5 +83,21 @@ mod tests {
         std::fs::write(&path, "this is not valid toml: {{{").unwrap();
         let config = load(&path);
         assert_eq!(config, AppConfig::default());
+    }
+
+    #[test]
+    fn test_load_toml_with_missing_new_field_preserves_existing_fields() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        // Write a TOML file with only the pre-existing fields (no streaming_partials_enabled).
+        let contents = r#"input_device = "device_123"
+target_lang = "en"
+"#;
+        std::fs::write(&path, contents).unwrap();
+        let config = load(&path);
+        // Verify that the existing fields are preserved and the missing field defaults to false.
+        assert_eq!(config.input_device, Some("device_123".to_string()));
+        assert_eq!(config.target_lang, Some("en".to_string()));
+        assert!(!config.streaming_partials_enabled);
     }
 }
