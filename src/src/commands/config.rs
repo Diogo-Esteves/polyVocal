@@ -8,6 +8,12 @@ pub struct AppConfig {
     pub streaming_partials_enabled: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SetConfigArgs {
+    config: AppConfig,
+}
+
 /// Retrieves the current application configuration.
 pub async fn get_config() -> Result<AppConfig, String> {
     tauri_sys::core::invoke_result::<AppConfig, String>("get_config", ()).await
@@ -15,5 +21,6 @@ pub async fn get_config() -> Result<AppConfig, String> {
 
 /// Saves the application configuration.
 pub async fn set_config(config: AppConfig) -> Result<(), String> {
-    tauri_sys::core::invoke_result::<(), String>("set_config", (config,)).await
+    let args = SetConfigArgs { config };
+    tauri_sys::core::invoke_result::<(), String>("set_config", args).await
 }
