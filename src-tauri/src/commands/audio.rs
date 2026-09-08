@@ -12,6 +12,7 @@ use crate::transcription::engine::{
 };
 use crate::transcription::pipeline::{ClosedSegment, RecordingPipeline};
 use crate::transcription::session::TranscriptionSession;
+use crate::transcription::streaming::{StreamingWindow, WindowTranscriber};
 use crate::vad::segmenter::SpeechSegmenter;
 use crate::vad::silero::{SileroVad, SILERO_FRAME_SIZE};
 use crate::vad::{VAD_MAX_SEGMENT_FRAMES, VAD_MIN_SILENCE_FRAMES, VAD_THRESHOLD};
@@ -92,6 +93,17 @@ const LEVEL_SMOOTHING_ALPHA: f32 = 0.3;
 /// `try_send`-drop-on-full is sufficient at this size; see #144.
 const SEGMENT_QUEUE_CAPACITY: usize = 2;
 
+/// Enable streaming partial transcriptions. Hardcoded to false for slice 1
+/// (#164); slice 3 (#166) replaces this with a real persisted user toggle.
+const STREAMING_PARTIALS_ENABLED: bool = false;
+
+/// Minimum interval between streaming window ticks. If the last inference
+/// took longer than this, schedule the next tick immediately; otherwise,
+/// schedule at 1.5× the inference time (adaptive, self-pacing). This prevents
+/// the tick loop from falling behind when Whisper's temperature-fallback
+/// retry fires (measured ~3× cost spike at buffer boundaries).
+const STREAMING_MIN_TICK_MS: u64 = 250;
+
 /// Outcome of a non-blocking attempt to hand a closed segment to the
 /// transcription worker.
 #[derive(Debug)]
@@ -115,6 +127,17 @@ fn try_enqueue_segment(
         Err(mpsc::error::TrySendError::Full(_)) => Err(EnqueueOutcome::Dropped),
         Err(mpsc::error::TrySendError::Closed(_)) => Err(EnqueueOutcome::WorkerGone),
     }
+}
+
+/// Check whether a streaming window tick should be skipped because a segment
+/// is currently pending in the worker queue. Returns `true` if the queue is
+/// non-empty (at least one `ClosedSegment` is waiting), `false` if empty.
+///
+/// The tick must never block or contend with `worker_loop`'s segment queue:
+/// if a real segment is waiting to be transcribed, the partial-transcription
+/// pass should skip this cycle to let the final pass have priority.
+fn should_skip_streaming_tick(queue_tx: &mpsc::Sender<ClosedSegment>) -> bool {
+    queue_tx.capacity() < SEGMENT_QUEUE_CAPACITY
 }
 
 /// Drop/backlog counters surfaced once at session end (#144 item 8) — a
@@ -154,6 +177,29 @@ impl Transcriber for EngineTranscriber {
         tokio::task::spawn_blocking(move || engine.transcribe(&samples, &options))
             .await
             .map_err(|e| anyhow::anyhow!("transcription task panicked: {e}"))?
+    }
+}
+
+struct EngineWindowTranscriber {
+    engine: Arc<TranscriptionEngine>,
+}
+
+impl WindowTranscriber for EngineWindowTranscriber {
+    async fn transcribe_window(&self, pcm: &[f32]) -> Result<String, String> {
+        let engine = self.engine.clone();
+        let pcm = pcm.to_vec();
+        let options = DecodeOptions {
+            strategy: DecodeStrategy::Greedy,
+            ..DecodeOptions::default()
+        };
+        tokio::task::spawn_blocking(move || {
+            engine
+                .transcribe(&pcm, &options)
+                .map(|result| result.text)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 }
 
@@ -327,6 +373,25 @@ async fn start_recording_inner(
         .map_err(|e| format!("calibration task panicked: {e}"))??
     };
 
+    // Load a second Tiny engine for streaming partials if enabled. Kept separate
+    // from the session engine (which may be any tier) per design§3: the session
+    // tier is a quality ceiling; partials are provisional and about to be replaced,
+    // so always using Tiny+Greedy for speed on all tiers is strictly correct.
+    let streaming_engine = if STREAMING_PARTIALS_ENABLED {
+        match TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny)) {
+            Ok(e) => {
+                tracing::info!("loaded Tiny engine for streaming partials");
+                Some(Arc::new(e))
+            }
+            Err(e) => {
+                tracing::warn!("failed to load Tiny engine for streaming partials: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Doesn't auto-download — VAD model must already be fetched via Settings,
     // same as the Whisper model above.
     let silero_path = manager.vad_model_path(&VadModel::Silero);
@@ -396,6 +461,20 @@ async fn start_recording_inner(
                 std::time::Duration::from_secs_f64(1.0 / LEVEL_EMIT_RATE_HZ as f64);
             let mut last_level_emit = std::time::Instant::now() - level_emit_interval;
 
+            // Initialize streaming window if the partial-transcription engine was loaded.
+            let mut streaming_window: Option<StreamingWindow<EngineWindowTranscriber>> =
+                streaming_engine.as_ref().map(|engine| {
+                    StreamingWindow::new(
+                        EngineWindowTranscriber {
+                            engine: engine.clone(),
+                        },
+                        0,
+                    )
+                });
+            let streaming_tick_interval = std::time::Duration::from_millis(STREAMING_MIN_TICK_MS);
+            let mut last_streaming_tick = std::time::Instant::now() - streaming_tick_interval;
+            let mut last_streaming_infer_time = streaming_tick_interval;
+
             'drain: while let Some(chunk) = rx.recv().await {
                 let dropped_samples_now = capture_counters.dropped_samples.load(Ordering::Relaxed);
                 let delta = dropped_samples_now.saturating_sub(last_dropped_samples_seen);
@@ -417,23 +496,70 @@ async fn start_recording_inner(
                     }
                 }
 
+                // Adaptive streaming window tick: schedule the next tick at
+                // max(MIN_TICK, last_infer_time * 1.5) to handle temperature-fallback
+                // spikes (can be ~3× normal cost). Skip the tick if a segment is pending
+                // in the queue — let the final pass have priority over provisional partials.
+                if let Some(window) = streaming_window.as_mut() {
+                    let next_tick_interval = std::cmp::max(
+                        streaming_tick_interval,
+                        std::time::Duration::from_secs_f64(
+                            last_streaming_infer_time.as_secs_f64() * 1.5,
+                        ),
+                    );
+                    if last_streaming_tick.elapsed() >= next_tick_interval {
+                        if should_skip_streaming_tick(&queue_tx) {
+                            last_streaming_tick = std::time::Instant::now();
+                        } else if let Some(buffer) = pipeline.in_progress() {
+                            window.feed(buffer);
+                            let tick_start = std::time::Instant::now();
+                            match window.tick().await {
+                                Ok(_tick) => {
+                                    // TODO (slice 2/#165): emit transcript:partial event with tick.committed/provisional
+                                }
+                                Err(e) => {
+                                    tracing::debug!("streaming window tick failed: {e}");
+                                }
+                            }
+                            last_streaming_infer_time = tick_start.elapsed();
+                            last_streaming_tick = std::time::Instant::now();
+                        }
+                    }
+                }
+
                 for frame in chunker.push(&chunk) {
                     match pipeline.push_frame(&frame) {
-                        Ok(Some(segment)) => match try_enqueue_segment(&queue_tx, segment) {
-                            Ok(()) => {}
-                            Err(EnqueueOutcome::Dropped) => {
-                                queue_drops += 1;
-                                tracing::warn!(
-                                    "transcription worker behind — dropped a closed segment"
-                                );
+                        Ok(Some(segment)) => {
+                            // Reset streaming window state on segment close (finalize the
+                            // window and clear it for the next utterance).
+                            if let Some(window) = streaming_window.as_mut() {
+                                match window.finalize().await {
+                                    Ok(_final_text) => {
+                                        // The segment-close transcription from the session engine
+                                        // (full tier) is authoritative and replaces all partials.
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!("streaming window finalize failed: {e}");
+                                    }
+                                }
                             }
-                            Err(EnqueueOutcome::WorkerGone) => {
-                                tracing::error!(
-                                    "transcription worker task ended — ending recording early"
-                                );
-                                break 'drain;
+
+                            match try_enqueue_segment(&queue_tx, segment) {
+                                Ok(()) => {}
+                                Err(EnqueueOutcome::Dropped) => {
+                                    queue_drops += 1;
+                                    tracing::warn!(
+                                        "transcription worker behind — dropped a closed segment"
+                                    );
+                                }
+                                Err(EnqueueOutcome::WorkerGone) => {
+                                    tracing::error!(
+                                        "transcription worker task ended — ending recording early"
+                                    );
+                                    break 'drain;
+                                }
                             }
-                        },
+                        }
                         Ok(None) => {}
                         Err(e) => tracing::error!("transcription pipeline error: {e}"),
                     }
@@ -657,6 +783,31 @@ mod select_engine_and_strategy_tests {
             result,
             ("tiny-engine", DecodeStrategy::BeamSearch { beam_size: 5 })
         );
+    }
+}
+
+#[cfg(test)]
+mod streaming_window_tests {
+    use super::*;
+
+    #[test]
+    fn test_should_skip_streaming_tick_when_queue_has_pending_segment() {
+        // When a segment is pending in the queue (queue is non-empty),
+        // should_skip_streaming_tick returns true so the tick is skipped.
+        let (tx, _rx) = mpsc::channel::<ClosedSegment>(SEGMENT_QUEUE_CAPACITY);
+
+        // Queue is empty: should not skip
+        assert!(!should_skip_streaming_tick(&tx));
+
+        // Send a segment; queue now has one pending, so should skip
+        let segment = ClosedSegment {
+            samples: vec![0.0f32; 100],
+            start_ms: 0,
+            end_ms: 100,
+        };
+        tx.try_send(segment).expect("queue should have room");
+
+        assert!(should_skip_streaming_tick(&tx));
     }
 }
 

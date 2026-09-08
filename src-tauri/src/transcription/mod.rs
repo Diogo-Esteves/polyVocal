@@ -9,3 +9,4 @@ pub mod calibration;
 pub mod engine;
 pub mod pipeline;
 pub mod session;
+pub mod streaming;
