@@ -270,4 +270,51 @@ mod tests {
         assert!(w.committed_words.is_empty());
         assert!(w.buffer.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_tick_sequence_commits_and_publishes_correctly() {
+        // A typical multi-pass sequence: first pass publishes provisional,
+        // second commits the prefix and updates provisional, third commits
+        // more words and then a final identical pass returns a noop. The last
+        // output is for finalize(), which runs its own transcribe_window pass.
+        let mut w = scripted_window(
+            vec![
+                "hello world",
+                "hello world friend",
+                "hello world friend",
+                "hello world friend",
+                "hello world friend.",
+            ],
+            0,
+        );
+
+        // First pass: no prior text to match against, so nothing commits
+        let tick1 = w.tick().await.unwrap();
+        assert_eq!(tick1.committed, "");
+        assert_eq!(tick1.provisional, "hello world");
+        assert!(!tick1.is_noop());
+
+        // Second pass: "hello world" now stable across two passes, so it commits
+        let tick2 = w.tick().await.unwrap();
+        assert_eq!(tick2.committed, "hello world");
+        assert_eq!(tick2.provisional, "friend");
+        assert!(!tick2.is_noop());
+
+        // Third pass: "friend" is now stable, so it also commits
+        let tick3 = w.tick().await.unwrap();
+        assert_eq!(tick3.committed, "friend");
+        assert_eq!(tick3.provisional, "");
+        assert!(!tick3.is_noop());
+
+        // Fourth pass: nothing changed from previous provisional, so noop
+        let tick4 = w.tick().await.unwrap();
+        assert!(tick4.is_noop());
+
+        // After finalization, all state is cleared
+        let final_text = w.finalize().await.unwrap();
+        assert_eq!(final_text, "hello world friend.");
+        assert!(w.committed_words.is_empty());
+        assert!(w.buffer.is_empty());
+        assert_eq!(w.prev_provisional, "");
+    }
 }

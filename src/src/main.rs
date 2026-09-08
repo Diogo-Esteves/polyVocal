@@ -13,7 +13,8 @@ mod shortcuts;
 mod theme;
 
 use commands::audio::{
-    list_input_devices, start_recording, stop_recording, AudioLevel, InputDevice, TranscriptSegment,
+    list_input_devices, start_recording, stop_recording, AudioLevel, InputDevice,
+    TranscriptPartial, TranscriptSegment,
 };
 use commands::config::{get_config, set_config, AppConfig};
 use commands::models::{
@@ -210,6 +211,18 @@ fn App() -> impl IntoView {
             let segment = event.payload;
             transcript_lines.update(|lines| lines.push(segment.text));
             detected_language.set(Some(segment.language));
+        }
+    });
+
+    // Listen for streaming partial transcriptions (#165, slice 2). For now,
+    // partials are received but not rendered — UI rendering is slice 3 (#167).
+    spawn_local(async move {
+        if let Ok(mut events) =
+            tauri_sys::event::listen::<TranscriptPartial>("transcript:partial").await
+        {
+            while let Some(_event) = events.next().await {
+                // TODO (#167): render partials to the UI
+            }
         }
     });
 

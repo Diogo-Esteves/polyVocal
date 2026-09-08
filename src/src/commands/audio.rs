@@ -9,6 +9,17 @@ pub struct TranscriptSegment {
     pub language: String,
 }
 
+/// Mirrors the `transcript:partial` event payload emitted by the Rust
+/// backend (#165) — provisional partial transcription updates from the
+/// streaming window. Never persisted to SQLite — UI-only state.
+#[derive(Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct TranscriptPartial {
+    pub session_id: String,
+    pub committed: String,
+    pub provisional: String,
+}
+
 /// Mirrors the `audio:level` event payload emitted by the Rust backend
 /// (#76) — a single smoothed RMS amplitude in `[0, 1]`, sampled from the mic
 /// roughly 20 times a second while recording.

@@ -67,6 +67,18 @@ struct TranscriptSegmentEvent {
     end_ms: i64,
 }
 
+/// Payload for the `transcript:partial` event (#165) — emitted on each
+/// streaming window tick while recording to surface provisional partial
+/// transcriptions in real-time. Unlike `transcript:segment`, this event is
+/// never persisted to SQLite — it's UI-only, so the frontend can render
+/// live partial updates as the user speaks without committing to storage.
+#[derive(Serialize, Clone)]
+struct TranscriptPartialEvent {
+    session_id: String,
+    committed: String,
+    provisional: String,
+}
+
 /// Payload for the `audio:level` event (#76) — a single smoothed RMS
 /// amplitude in `[0, 1]`, emitted at [`LEVEL_EMIT_RATE_HZ`] while recording
 /// so the frontend can drive the record button's `--pv-amp` strand meter
@@ -449,6 +461,7 @@ async fn start_recording_inner(
 
     let producer_task: JoinHandle<RecordingStats> = tokio::spawn({
         let app = app.clone();
+        let session_id = session_id.clone();
         async move {
             let mut pipeline = pipeline;
             let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
@@ -514,8 +527,19 @@ async fn start_recording_inner(
                             window.feed(buffer);
                             let tick_start = std::time::Instant::now();
                             match window.tick().await {
-                                Ok(_tick) => {
-                                    // TODO (slice 2/#165): emit transcript:partial event with tick.committed/provisional
+                                Ok(tick) => {
+                                    if !tick.is_noop() {
+                                        let payload = TranscriptPartialEvent {
+                                            session_id: session_id.clone(),
+                                            committed: tick.committed,
+                                            provisional: tick.provisional,
+                                        };
+                                        if let Err(e) = app.emit("transcript:partial", &payload) {
+                                            tracing::error!(
+                                                "failed to emit transcript:partial: {e}"
+                                            );
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::debug!("streaming window tick failed: {e}");
