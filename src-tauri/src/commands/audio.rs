@@ -105,10 +105,6 @@ const LEVEL_SMOOTHING_ALPHA: f32 = 0.3;
 /// `try_send`-drop-on-full is sufficient at this size; see #144.
 const SEGMENT_QUEUE_CAPACITY: usize = 2;
 
-/// Enable streaming partial transcriptions. Hardcoded to false for slice 1
-/// (#164); slice 3 (#166) replaces this with a real persisted user toggle.
-const STREAMING_PARTIALS_ENABLED: bool = false;
-
 /// Minimum interval between streaming window ticks. If the last inference
 /// took longer than this, schedule the next tick immediately; otherwise,
 /// schedule at 1.5× the inference time (adaptive, self-pacing). This prevents
@@ -150,6 +146,27 @@ fn try_enqueue_segment(
 /// pass should skip this cycle to let the final pass have priority.
 fn should_skip_streaming_tick(queue_tx: &mpsc::Sender<ClosedSegment>) -> bool {
     queue_tx.capacity() < SEGMENT_QUEUE_CAPACITY
+}
+
+/// Load a Tiny engine for streaming partials if the feature is enabled.
+/// The `load` closure is injected to allow unit testing without real model weights.
+fn resolve_streaming_engine<E, F>(enabled: bool, load: F) -> Option<E>
+where
+    F: FnOnce() -> Result<E, String>,
+{
+    if !enabled {
+        return None;
+    }
+    match load() {
+        Ok(engine) => {
+            tracing::info!("loaded Tiny engine for streaming partials");
+            Some(engine)
+        }
+        Err(e) => {
+            tracing::warn!("failed to load Tiny engine for streaming partials: {e}");
+            None
+        }
+    }
 }
 
 /// Drop/backlog counters surfaced once at session end (#144 item 8) — a
@@ -389,20 +406,14 @@ async fn start_recording_inner(
     // from the session engine (which may be any tier) per design§3: the session
     // tier is a quality ceiling; partials are provisional and about to be replaced,
     // so always using Tiny+Greedy for speed on all tiers is strictly correct.
-    let streaming_engine = if STREAMING_PARTIALS_ENABLED {
-        match TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny)) {
-            Ok(e) => {
-                tracing::info!("loaded Tiny engine for streaming partials");
-                Some(Arc::new(e))
-            }
-            Err(e) => {
-                tracing::warn!("failed to load Tiny engine for streaming partials: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let config_path = crate::commands::config::config_path(&app).map_err(|e| e.to_string())?;
+    let config = crate::config::load(&config_path);
+    let streaming_engine: Option<Arc<TranscriptionEngine>> =
+        resolve_streaming_engine(config.streaming_partials_enabled, || {
+            TranscriptionEngine::load(manager.model_path(&ModelSize::Tiny))
+                .map(Arc::new)
+                .map_err(|e| e.to_string())
+        });
 
     // Doesn't auto-download — VAD model must already be fetched via Settings,
     // same as the Whisper model above.
@@ -832,6 +843,33 @@ mod streaming_window_tests {
         tx.try_send(segment).expect("queue should have room");
 
         assert!(should_skip_streaming_tick(&tx));
+    }
+
+    #[test]
+    fn test_resolve_streaming_engine_disabled_returns_none() {
+        let loader_called = std::cell::Cell::new(false);
+        let result: Option<&str> = resolve_streaming_engine(false, || {
+            loader_called.set(true);
+            Ok("engine")
+        });
+        assert!(result.is_none());
+        assert!(
+            !loader_called.get(),
+            "loader should not be called when disabled"
+        );
+    }
+
+    #[test]
+    fn test_resolve_streaming_engine_enabled_ok_returns_some() {
+        let result: Option<&str> = resolve_streaming_engine(true, || Ok("test-engine"));
+        assert_eq!(result, Some("test-engine"));
+    }
+
+    #[test]
+    fn test_resolve_streaming_engine_enabled_err_returns_none() {
+        let result: Option<&str> =
+            resolve_streaming_engine(true, || Err("load failed".to_string()));
+        assert!(result.is_none());
     }
 }
 

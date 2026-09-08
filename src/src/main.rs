@@ -149,11 +149,13 @@ fn App() -> impl IntoView {
     // row's "Default" option) — same convention `StartRecordingArgs`
     // already used before this picker existed.
     let selected_device_id = RwSignal::new(None::<String>);
+    let streaming_partials_enabled = RwSignal::new(false);
 
     let persist_config = move || {
         let cfg = AppConfig {
             input_device: selected_device_id.get_untracked(),
             target_lang: Some(target_lang.get_untracked()),
+            streaming_partials_enabled: streaming_partials_enabled.get_untracked(),
         };
         spawn_local(async move {
             if let Err(e) = set_config(cfg).await {
@@ -261,6 +263,7 @@ fn App() -> impl IntoView {
             if let Some(lang) = cfg.target_lang {
                 target_lang.set(lang);
             }
+            streaming_partials_enabled.set(cfg.streaming_partials_enabled);
         }
     });
 
@@ -608,6 +611,19 @@ fn App() -> impl IntoView {
                                     <option value="r">{RecordShortcutKey::R.label()}</option>
                                     <option value="s">{RecordShortcutKey::S.label()}</option>
                                 </select>
+                            </div>
+
+                            <div class="settings-row">
+                                <label for="streaming-partials-checkbox">"Show text while I'm still speaking"</label>
+                                <input
+                                    type="checkbox"
+                                    id="streaming-partials-checkbox"
+                                    prop:checked=move || streaming_partials_enabled.get()
+                                    on:change=move |ev| {
+                                        streaming_partials_enabled.set(event_target_checked(&ev));
+                                        persist_config();
+                                    }
+                                />
                             </div>
                         }.into_any()
                     }
