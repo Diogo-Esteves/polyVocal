@@ -110,7 +110,11 @@ impl<T: WindowTranscriber> StreamingWindow<T> {
     /// full — the segment-close transcription is authoritative and replaces
     /// every partial published for this utterance.
     pub async fn finalize(&mut self) -> Result<String, String> {
-        let text = self.transcriber.transcribe_window(&self.buffer).await?;
+        let text = if self.buffer.is_empty() {
+            String::new()
+        } else {
+            self.transcriber.transcribe_window(&self.buffer).await?
+        };
         self.buffer.clear();
         self.committed_words.clear();
         self.prev_words.clear();
@@ -261,6 +265,7 @@ mod tests {
             ],
             0,
         );
+        w.feed(&[0.1; 16000]); // Feed dummy audio so buffer is not empty
         w.tick().await.unwrap();
         w.tick().await.unwrap();
         assert_eq!(
@@ -287,6 +292,8 @@ mod tests {
             ],
             0,
         );
+
+        w.feed(&[0.1; 16000]); // Feed dummy audio so buffer is not empty
 
         // First pass: no prior text to match against, so nothing commits
         let tick1 = w.tick().await.unwrap();
@@ -315,6 +322,23 @@ mod tests {
         assert_eq!(final_text, "hello world friend.");
         assert!(w.committed_words.is_empty());
         assert!(w.buffer.is_empty());
+        assert_eq!(w.prev_provisional, "");
+    }
+
+    #[tokio::test]
+    async fn test_finalize_on_empty_buffer_skips_transcriber() {
+        // If finalize() calls transcribe_window on an empty buffer, this will
+        // panic because there are no scripted outputs provided. If the fix is
+        // correct, transcribe_window is never called and finalize() returns an
+        // empty string without panicking. This scenario occurs when backpressure
+        // on the transcription queue prevents feed() from ever being called
+        // before a segment closes (see issue #175).
+        let mut w = scripted_window(vec![], 0);
+        let text = w.finalize().await.unwrap();
+        assert_eq!(text, "");
+        assert!(w.buffer.is_empty());
+        assert!(w.committed_words.is_empty());
+        assert!(w.prev_words.is_empty());
         assert_eq!(w.prev_provisional, "");
     }
 }
