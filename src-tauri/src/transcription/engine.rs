@@ -99,6 +99,7 @@ impl TranscriptionEngine {
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        params.set_token_timestamps(true);
 
         state
             .full(params, pcm)
@@ -110,17 +111,49 @@ impl TranscriptionEngine {
 
         let mut text = String::new();
         let mut segments = Vec::new();
+        let token_eot = self.context.token_eot();
         for segment in state.as_iter() {
             let segment_text = segment.to_str_lossy().unwrap_or_default().into_owned();
             if !text.is_empty() && !segment_text.is_empty() {
                 text.push(' ');
             }
             text.push_str(segment_text.trim());
+
+            // Extract word-level tokens from this segment.
+            let mut words = Vec::new();
+            let n_tokens = segment.n_tokens();
+            for i in 0..n_tokens {
+                if let Some(token) = segment.get_token(i) {
+                    // Skip special/control tokens (EOT, language, timestamp markers, etc.)
+                    if token.token_id() >= token_eot {
+                        continue;
+                    }
+                    // Extract token text — skip on error rather than failing.
+                    let token_text = match token.to_str_lossy() {
+                        Ok(text) => text,
+                        Err(_) => continue,
+                    };
+                    let trimmed = token_text.trim().to_string();
+                    // Skip empty tokens (whitespace-only).
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    // Extract timing via token_data (centiseconds, same as segment timestamps).
+                    let token_data = token.token_data();
+                    words.push(Word {
+                        text: trimmed,
+                        start_ms: token_data.t0 * 10,
+                        end_ms: token_data.t1 * 10,
+                    });
+                }
+            }
+
             segments.push(Segment {
                 // whisper.cpp timestamps are in centiseconds (10s of ms).
                 start_ms: segment.start_timestamp() * 10,
                 end_ms: segment.end_timestamp() * 10,
                 text: segment_text,
+                words,
             });
         }
 
@@ -140,10 +173,18 @@ pub struct TranscriptResult {
 }
 
 #[derive(Debug, Clone)]
+pub struct Word {
+    pub text: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct Segment {
     pub start_ms: i64,
     pub end_ms: i64,
     pub text: String,
+    pub words: Vec<Word>,
 }
 
 #[cfg(test)]
@@ -209,5 +250,57 @@ mod tests {
         // accuracy — only that the FFI round-trip produced a well-formed
         // result without crashing.
         assert!(!result.language.is_empty());
+    }
+
+    /// Tests word-level timestamp extraction from real Whisper inference.
+    /// Verifies that tokens are properly filtered, timing is correct, and
+    /// word timestamps are scoped to their parent segment.
+    #[tokio::test]
+    #[ignore]
+    async fn test_real_whisper_word_level_timestamps() {
+        use crate::models::downloader::ReqwestDownloader;
+        use crate::models::manager::ModelManager;
+        use crate::models::registry::ModelSize;
+
+        let models_dir = std::env::temp_dir().join("polyvocal_test_real_whisper_models");
+        let manager = ModelManager::new(models_dir.clone());
+        manager
+            .download(&ModelSize::Tiny, &ReqwestDownloader)
+            .await
+            .expect("real tiny model should download");
+
+        let model_path = models_dir.join(ModelSize::Tiny.filename());
+        let engine = TranscriptionEngine::load(model_path).expect("real model should load");
+
+        let pcm = vec![0.0f32; 16000]; // 1 second of silence at 16kHz
+        let result = engine
+            .transcribe(&pcm, &DecodeOptions::default())
+            .expect("real inference should not fail");
+
+        // Verify segments exist and at least one has words.
+        assert!(
+            !result.segments.is_empty(),
+            "result should have at least one segment"
+        );
+        let has_words = result.segments.iter().any(|seg| !seg.words.is_empty());
+        assert!(has_words, "at least one segment should have words");
+
+        // Verify word timestamps are valid and scoped to their segment.
+        for segment in &result.segments {
+            for word in &segment.words {
+                assert!(
+                    word.start_ms <= word.end_ms,
+                    "word start_ms must be <= end_ms: {word:?}"
+                );
+                assert!(
+                    word.start_ms >= segment.start_ms,
+                    "word start_ms must be >= segment.start_ms: word={word:?}, segment={segment:?}"
+                );
+                assert!(
+                    word.end_ms <= segment.end_ms,
+                    "word end_ms must be <= segment.end_ms: word={word:?}, segment={segment:?}"
+                );
+            }
+        }
     }
 }
