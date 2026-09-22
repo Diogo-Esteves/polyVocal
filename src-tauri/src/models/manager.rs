@@ -47,9 +47,18 @@ impl ModelManager {
     /// Path to the currently active model, if any.
     pub fn active_model_path(&self) -> Option<PathBuf> {
         let marker = self.models_dir.join(".active");
-        std::fs::read_to_string(marker)
-            .ok()
-            .map(|s| self.models_dir.join(s.trim()))
+        let content = std::fs::read_to_string(marker).ok()?;
+        let trimmed = content.trim();
+        let known_filenames = [
+            ModelSize::Tiny.filename(),
+            ModelSize::Base.filename(),
+            ModelSize::Small.filename(),
+            ModelSize::Medium.filename(),
+        ];
+        if !known_filenames.contains(&trimmed) {
+            return None;
+        }
+        Some(self.models_dir.join(trimmed))
     }
 
     /// Set the active model.
@@ -400,5 +409,32 @@ mod tests {
         let manager = ModelManager::new(tmp.path().to_path_buf());
 
         assert!(manager.is_translation_model_downloaded(&TranslationModel::EnEs));
+    }
+
+    #[test]
+    fn test_active_model_path_rejects_path_traversal() {
+        let tmp = temp_models_dir();
+        let marker = tmp.path().join(".active");
+
+        let manager = ModelManager::new(tmp.path().to_path_buf());
+
+        // Write a path traversal string directly to the marker file
+        std::fs::write(&marker, "../../../etc/passwd").unwrap();
+
+        assert_eq!(manager.active_model_path(), None);
+    }
+
+    #[test]
+    fn test_active_model_path_accepts_valid_filename() {
+        let tmp = temp_models_dir();
+        let marker = tmp.path().join(".active");
+
+        let manager = ModelManager::new(tmp.path().to_path_buf());
+
+        // Write a valid filename directly to the marker file
+        std::fs::write(&marker, "ggml-tiny.bin").unwrap();
+
+        let expected = tmp.path().join("ggml-tiny.bin");
+        assert_eq!(manager.active_model_path(), Some(expected));
     }
 }
