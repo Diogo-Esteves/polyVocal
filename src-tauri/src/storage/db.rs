@@ -18,6 +18,7 @@ pub async fn initialise(app: &AppHandle) -> Result<SqlitePool> {
         .map_err(|e| anyhow!("failed to resolve app data directory: {e}"))?;
 
     std::fs::create_dir_all(&app_dir)?;
+    crate::fs_perms::restrict_to_owner(&app_dir, 0o700);
 
     let db_path = app_dir.join("polyvocal.db");
     // Filename only, never the resolved path — logs are persisted to disk
@@ -31,6 +32,7 @@ pub async fn initialise(app: &AppHandle) -> Result<SqlitePool> {
         .max_connections(5)
         .connect_with(options)
         .await?;
+    crate::fs_perms::restrict_to_owner(&db_path, 0o600);
 
     run_migrations(&pool).await?;
 
