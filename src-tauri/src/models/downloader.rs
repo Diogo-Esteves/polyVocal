@@ -33,6 +33,7 @@ pub trait ModelDownloader {
 /// Returns an error if `bytes`'s SHA256 doesn't match `expected_sha256`.
 /// Pure and network-free so it's unit-testable directly, independent of
 /// `ReqwestDownloader`'s real HTTP fetch.
+#[allow(dead_code)]
 fn verify_sha256(bytes: &[u8], expected_sha256: &str) -> Result<()> {
     use sha2::{Digest, Sha256};
     let actual = format!("{:x}", Sha256::digest(bytes));
@@ -59,6 +60,8 @@ pub struct ReqwestDownloader;
 
 impl ModelDownloader for ReqwestDownloader {
     async fn download_to(&self, url: &str, dest: &Path, expected_sha256: &str) -> Result<()> {
+        use sha2::{Digest, Sha256};
+
         let response = reqwest::get(url).await?.error_for_status()?;
         let mut stream = response.bytes_stream();
 
@@ -73,16 +76,19 @@ impl ModelDownloader for ReqwestDownloader {
         let tmp_dest = tmp_path_for(dest);
 
         let mut file = tokio::fs::File::create(&tmp_dest).await?;
+        let mut hasher = Sha256::new();
         while let Some(chunk) = stream.next().await {
-            file.write_all(&chunk?).await?;
+            let chunk = chunk?;
+            hasher.update(&chunk);
+            file.write_all(&chunk).await?;
         }
         file.flush().await?;
         drop(file);
 
-        let bytes = tokio::fs::read(&tmp_dest).await?;
-        if let Err(e) = verify_sha256(&bytes, expected_sha256) {
+        let actual = format!("{:x}", hasher.finalize());
+        if actual != expected_sha256 {
             tokio::fs::remove_file(&tmp_dest).await.ok();
-            return Err(e);
+            anyhow::bail!("checksum mismatch: expected {expected_sha256}, got {actual}");
         }
 
         // If `dest` already exists at this point, a concurrent caller already
