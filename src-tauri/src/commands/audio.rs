@@ -148,6 +148,19 @@ fn should_skip_streaming_tick(queue_tx: &mpsc::Sender<ClosedSegment>) -> bool {
     queue_tx.capacity() < SEGMENT_QUEUE_CAPACITY
 }
 
+/// Returns the portion of `buffer` not yet fed to the streaming window (the
+/// delta since the last call), and advances `fed_len` to `buffer.len()`.
+/// Returns `None` if there's nothing new (buffer hasn't grown).
+fn streaming_feed_delta<'a>(buffer: &'a [f32], fed_len: &mut usize) -> Option<&'a [f32]> {
+    if buffer.len() > *fed_len {
+        let delta = &buffer[*fed_len..];
+        *fed_len = buffer.len();
+        Some(delta)
+    } else {
+        None
+    }
+}
+
 /// Drop/backlog counters surfaced once at session end (#144 item 8) — a
 /// single structured `tracing` line, local log only, no telemetry upload
 /// (this app's privacy-first design).
@@ -511,6 +524,7 @@ async fn start_recording_inner(
             let streaming_tick_interval = std::time::Duration::from_millis(STREAMING_MIN_TICK_MS);
             let mut last_streaming_tick = std::time::Instant::now() - streaming_tick_interval;
             let mut last_streaming_infer_time = streaming_tick_interval;
+            let mut streaming_fed_len: usize = 0;
 
             'drain: while let Some(chunk) = rx.recv().await {
                 let dropped_samples_now = capture_counters.dropped_samples.load(Ordering::Relaxed);
@@ -548,7 +562,11 @@ async fn start_recording_inner(
                         if should_skip_streaming_tick(&queue_tx) {
                             last_streaming_tick = std::time::Instant::now();
                         } else if let Some(buffer) = pipeline.in_progress() {
-                            window.feed(buffer);
+                            if let Some(delta) =
+                                streaming_feed_delta(buffer, &mut streaming_fed_len)
+                            {
+                                window.feed(delta);
+                            }
                             let tick_start = std::time::Instant::now();
                             match window.tick().await {
                                 Ok(tick) => {
@@ -578,18 +596,12 @@ async fn start_recording_inner(
                 for frame in chunker.push(&chunk) {
                     match pipeline.push_frame(&frame) {
                         Ok(Some(segment)) => {
-                            // Reset streaming window state on segment close (finalize the
-                            // window and clear it for the next utterance).
+                            // Reset streaming window state on segment close (the segment-close
+                            // transcription from the session engine is authoritative and replaces
+                            // all partials, so there's no need to run inference here).
                             if let Some(window) = streaming_window.as_mut() {
-                                match window.finalize().await {
-                                    Ok(_final_text) => {
-                                        // The segment-close transcription from the session engine
-                                        // (full tier) is authoritative and replaces all partials.
-                                    }
-                                    Err(e) => {
-                                        tracing::debug!("streaming window finalize failed: {e}");
-                                    }
-                                }
+                                window.reset();
+                                streaming_fed_len = 0;
                             }
 
                             match try_enqueue_segment(&queue_tx, segment) {
@@ -856,6 +868,34 @@ mod streaming_window_tests {
         tx.try_send(segment).expect("queue should have room");
 
         assert!(should_skip_streaming_tick(&tx));
+    }
+
+    #[test]
+    fn test_streaming_feed_delta_returns_only_new_samples() {
+        let mut fed_len = 0;
+
+        // First call: buffer grows from 0 to 100
+        let buffer = vec![0.0f32; 100];
+        let delta = streaming_feed_delta(&buffer, &mut fed_len);
+        assert_eq!(delta.map(|d| d.len()), Some(100));
+        assert_eq!(fed_len, 100);
+
+        // Second call: buffer grows to 250, returns only the new 150 samples
+        let buffer = vec![0.0f32; 250];
+        let delta = streaming_feed_delta(&buffer, &mut fed_len);
+        assert_eq!(delta.map(|d| d.len()), Some(150));
+        assert_eq!(fed_len, 250);
+
+        // Third call: buffer stays at 250, no growth, returns None
+        let delta = streaming_feed_delta(&buffer, &mut fed_len);
+        assert_eq!(delta, None);
+        assert_eq!(fed_len, 250);
+
+        // Fourth call: buffer grows to 400, returns only the new 150 samples
+        let buffer = vec![0.0f32; 400];
+        let delta = streaming_feed_delta(&buffer, &mut fed_len);
+        assert_eq!(delta.map(|d| d.len()), Some(150));
+        assert_eq!(fed_len, 400);
     }
 }
 

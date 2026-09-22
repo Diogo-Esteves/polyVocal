@@ -9,6 +9,22 @@
 
 use std::future::Future;
 
+/// Below this, a tick is skipped rather than transcribed — a very short
+/// buffer is exactly the condition that makes Whisper hallucinate silence
+/// phrases (design note streaming-transcription.md §4). 16 kHz mono, ~1s.
+const MIN_TICK_BUFFER_SAMPLES: usize = 16_000;
+
+/// Known Whisper silence/hallucination outputs to suppress from partials.
+/// Matched case-insensitively against the trimmed, trailing-punctuation-
+/// stripped tick output. Not exhaustive — extend if QA finds more.
+const HALLUCINATION_BLOCKLIST: &[&str] = &[
+    "thank you",
+    "thank you for watching",
+    "thanks for watching",
+    "subtitles by the amara.org community",
+    "please subscribe",
+];
+
 /// "Re-transcribe this whole rolling buffer and give me the text." The seam
 /// that lets the commit policy be tested without Whisper.
 pub trait WindowTranscriber: Send + Sync {
@@ -68,9 +84,34 @@ impl<T: WindowTranscriber> StreamingWindow<T> {
         self.buffer.extend_from_slice(samples);
     }
 
+    /// End of utterance, without paying for a final inference pass: the
+    /// segment-close transcription from the session's own (higher-tier) engine
+    /// is what's actually authoritative and gets displayed — this just resets
+    /// the window's per-utterance diff state for the next one. Prefer this over
+    /// `finalize()` when the caller has no use for the returned text (as
+    /// `commands::audio`'s tick loop doesn't — see #181).
+    pub fn reset(&mut self) {
+        self.buffer.clear();
+        self.committed_words.clear();
+        self.prev_words.clear();
+        self.prev_provisional.clear();
+    }
+
     /// One re-transcription pass over the whole buffer.
     pub async fn tick(&mut self) -> Result<Tick, String> {
+        // Skip transcription on buffers shorter than MIN_TICK_BUFFER_SAMPLES to avoid
+        // Whisper hallucinations on very short audio.
+        if self.buffer.len() < MIN_TICK_BUFFER_SAMPLES {
+            return Ok(Tick::default());
+        }
+
         let text = self.transcriber.transcribe_window(&self.buffer).await?;
+
+        // Suppress known hallucination phrases from the blocklist.
+        if is_hallucination(&text) {
+            return Ok(Tick::default());
+        }
+
         let words: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
         if words.is_empty() {
             return Ok(Tick::default());
@@ -131,6 +172,13 @@ fn word_eq(a: &str, b: &str) -> bool {
     norm(a) == norm(b)
 }
 
+fn is_hallucination(text: &str) -> bool {
+    let normalized = text.trim().trim_end_matches(['.', '!', '?']).to_lowercase();
+    HALLUCINATION_BLOCKLIST
+        .iter()
+        .any(|&blocked| blocked == normalized)
+}
+
 fn common_prefix_len(a: &[String], b: &[String]) -> usize {
     a.iter()
         .zip(b.iter())
@@ -172,6 +220,7 @@ mod tests {
     #[tokio::test]
     async fn test_first_pass_commits_nothing_but_publishes_a_provisional_tail() {
         let mut w = scripted_window(vec!["and so my"], 0);
+        w.feed(&[0.1; 16000]);
         let tick = w.tick().await.unwrap();
         assert_eq!(tick.committed, "");
         assert_eq!(tick.provisional, "and so my");
@@ -180,6 +229,7 @@ mod tests {
     #[tokio::test]
     async fn test_words_agreed_across_two_passes_are_committed() {
         let mut w = scripted_window(vec!["and so my", "and so my fellow"], 0);
+        w.feed(&[0.1; 16000]);
         w.tick().await.unwrap();
         let tick = w.tick().await.unwrap();
         assert_eq!(tick.committed, "and so my");
@@ -196,6 +246,7 @@ mod tests {
             ],
             0,
         );
+        w.feed(&[0.1; 16000]);
         w.tick().await.unwrap();
         assert_eq!(w.tick().await.unwrap().committed, "and so my");
         let third = w.tick().await.unwrap();
@@ -208,6 +259,7 @@ mod tests {
         // Whisper flip-flops on the last word; it stays provisional, and the
         // stable prefix in front of it still commits.
         let mut w = scripted_window(vec!["ask not what your", "ask not what you're"], 0);
+        w.feed(&[0.1; 16000]);
         w.tick().await.unwrap();
         let tick = w.tick().await.unwrap();
         assert_eq!(tick.committed, "ask not what");
@@ -227,6 +279,7 @@ mod tests {
             ],
             0,
         );
+        w.feed(&[0.1; 16000]);
         w.tick().await.unwrap();
         w.tick().await.unwrap();
         let tick = w.tick().await.unwrap();
@@ -237,6 +290,7 @@ mod tests {
     #[tokio::test]
     async fn test_hold_back_words_keeps_the_trailing_stable_words_provisional() {
         let mut w = scripted_window(vec!["and so my fellow", "and so my fellow Americans"], 2);
+        w.feed(&[0.1; 16000]);
         w.tick().await.unwrap();
         let tick = w.tick().await.unwrap();
         // 4 words stable, 2 held back -> only "and so" commits.
@@ -247,6 +301,7 @@ mod tests {
     #[tokio::test]
     async fn test_identical_consecutive_passes_produce_a_noop_tick() {
         let mut w = scripted_window(vec!["and so my", "and so my", "and so my"], 0);
+        w.feed(&[0.1; 16000]);
         w.tick().await.unwrap();
         assert!(!w.tick().await.unwrap().is_noop()); // commits the prefix
         assert!(w.tick().await.unwrap().is_noop()); // nothing changed
@@ -336,6 +391,55 @@ mod tests {
         let mut w = scripted_window(vec![], 0);
         let text = w.finalize().await.unwrap();
         assert_eq!(text, "");
+        assert!(w.buffer.is_empty());
+        assert!(w.committed_words.is_empty());
+        assert!(w.prev_words.is_empty());
+        assert_eq!(w.prev_provisional, "");
+    }
+
+    #[tokio::test]
+    async fn test_tick_on_short_buffer_returns_noop_without_transcribing() {
+        // A buffer shorter than MIN_TICK_BUFFER_SAMPLES should skip transcription
+        // entirely and return a no-op tick. This is checked by providing no
+        // scripted outputs — if transcribe_window is called, this will panic.
+        let mut w = scripted_window(vec![], 0);
+        w.feed(&[0.1; 1000]); // Feed 1000 samples, much less than MIN_TICK_BUFFER_SAMPLES
+        let tick = w.tick().await.unwrap();
+        assert!(tick.is_noop());
+        assert!(w.buffer.len() < MIN_TICK_BUFFER_SAMPLES);
+    }
+
+    #[tokio::test]
+    async fn test_tick_suppresses_hallucination_blocklist_phrases() {
+        // When the transcriber returns a phrase in the hallucination blocklist
+        // (e.g. "Thank you."), tick() should return a no-op and not update
+        // prev_words/prev_provisional, so a subsequent real tick isn't corrupted.
+        let mut w = scripted_window(vec!["Thank you.", "hello world friend"], 0);
+        w.feed(&[0.1; 20000]); // Feed enough samples to pass MIN_TICK_BUFFER_SAMPLES
+
+        // First tick gets a hallucination — should return noop and not commit
+        let tick1 = w.tick().await.unwrap();
+        assert!(tick1.is_noop());
+        assert!(w.committed_words.is_empty());
+        assert!(w.prev_words.is_empty());
+
+        // Second tick gets real text — should work normally since prev_words
+        // is still empty from the hallucination being skipped
+        let tick2 = w.tick().await.unwrap();
+        assert_eq!(tick2.provisional, "hello world friend");
+        assert!(w.prev_words.contains(&"hello".to_string()));
+    }
+
+    #[test]
+    fn test_reset_clears_all_per_utterance_state() {
+        let mut w = scripted_window(vec!["hello world"], 0);
+        w.feed(&[0.1; 16000]);
+        w.committed_words = vec!["hello".to_string(), "world".to_string()];
+        w.prev_words = vec!["hello".to_string(), "world".to_string()];
+        w.prev_provisional = "friend".to_string();
+
+        w.reset();
+
         assert!(w.buffer.is_empty());
         assert!(w.committed_words.is_empty());
         assert!(w.prev_words.is_empty());
