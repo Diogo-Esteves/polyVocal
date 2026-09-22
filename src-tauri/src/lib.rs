@@ -1,6 +1,7 @@
 pub mod audio;
 mod commands;
 pub mod config;
+mod fs_perms;
 pub mod logging;
 pub mod models;
 mod storage;

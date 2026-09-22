@@ -90,6 +90,7 @@ pub fn init(identifier: &str) -> Option<WorkerGuard> {
 fn file_writer(identifier: &str) -> Result<(NonBlocking, WorkerGuard)> {
     let dir = log_dir(identifier).ok_or_else(|| anyhow!("no platform data directory"))?;
     std::fs::create_dir_all(&dir)?;
+    crate::fs_perms::restrict_to_owner(&dir, 0o700);
 
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
