@@ -1,0 +1,41 @@
+# Mirrors the `ignore:` list in .github/workflows/security-audit.yml's
+# cargo-audit step, so `cargo audit` run locally from src-tauri/ agrees
+# with what CI already allows — see #195. If you update one, update
+# both, or better: check whether `rustsec/audit-check` can be pointed
+# at this file directly and drop the duplication (not attempted here
+# to avoid changing CI behavior for the sibling `src` crate's audit
+# leg, which has different unmaintained-dependency warnings of its
+# own not covered by this list).
+
+[advisories]
+ignore = [
+    # rsa: pulled into Cargo.lock but not compiled into any actual target — see #100
+    "RUSTSEC-2023-0071",
+    # protobuf via rust_tokenizers: only parses this repo's checksum-verified, pinned model files — see #99
+    "RUSTSEC-2024-0437",
+    # atk, atk-sys, gdk, gdk-sys, gdkwayland-sys, gdkx11, gdkx11-sys, gtk, gtk-sys, gtk3-macros (unmaintained):
+    # transitively via muda/tauri v2.11.5; no newer version drops GTK3 dependency yet — see #104-#113
+    "RUSTSEC-2024-0413",
+    "RUSTSEC-2024-0416",
+    "RUSTSEC-2024-0412",
+    "RUSTSEC-2024-0418",
+    "RUSTSEC-2024-0411",
+    "RUSTSEC-2024-0417",
+    "RUSTSEC-2024-0419",
+    "RUSTSEC-2024-0420",
+    "RUSTSEC-2024-0415",
+    "RUSTSEC-2024-0414",
+    # glib v0.18.5: unsound Iterator impl, same GTK3 transitive chain — see #121
+    "RUSTSEC-2024-0429",
+    # proc-macro-error: via glib-macros (GTK3 chain) — see #114
+    "RUSTSEC-2024-0370",
+    # unic-ucd-version, unic-ucd-ident, unic-common, unic-char-range, unic-char-property (unmaintained):
+    # transitively via urlpattern/tauri-utils/tauri — see #116-#120
+    "RUSTSEC-2025-0098",
+    "RUSTSEC-2025-0100",
+    "RUSTSEC-2025-0080",
+    "RUSTSEC-2025-0075",
+    "RUSTSEC-2025-0081",
+    # paste (unmaintained): via gemm/candle-core v0.11.0 (ML/translation backend) — see #97
+    "RUSTSEC-2024-0436",
+]
