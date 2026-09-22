@@ -29,9 +29,7 @@ path = "src/main.rs"
 [dependencies]
 # Tauri — desktop app framework
 tauri = { version = "2", features = [] }
-tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
 tauri-plugin-notification = "2"
 
 # Async runtime
