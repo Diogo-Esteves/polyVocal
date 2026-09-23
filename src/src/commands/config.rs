@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct AppConfig {
     pub input_device: Option<String>,
     pub target_lang: Option<String>,
+    pub source_lang: Option<String>,
     pub streaming_partials_enabled: bool,
 }
 
