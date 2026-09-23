@@ -251,6 +251,7 @@ async fn worker_loop<T, F, Fut>(
     mut queue_rx: mpsc::Receiver<ClosedSegment>,
     transcriber: &T,
     default_strategy: DecodeStrategy,
+    source_lang: Option<String>,
     mut session: TranscriptionSession,
     mut on_segment: F,
 ) -> TranscriptionSession
@@ -272,6 +273,7 @@ where
         };
         let options = DecodeOptions {
             strategy,
+            language: source_lang.clone(),
             ..DecodeOptions::default()
         };
 
@@ -663,11 +665,13 @@ async fn start_recording_inner(
         let transcriber = EngineTranscriber {
             engine: engine.clone(),
         };
+        let source_lang = config.source_lang.clone();
         async move {
             worker_loop(
                 queue_rx,
                 &transcriber,
                 default_strategy,
+                source_lang,
                 session,
                 |result, start_ms, end_ms| {
                     persist_and_emit_segment(
@@ -1342,12 +1346,13 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Records the `DecodeStrategy` it was called with (so tests can assert
-    /// degrade-before-drop actually happened) and returns a scripted result
+    /// Records the `DecodeStrategy` and language it was called with (so tests can assert
+    /// degrade-before-drop and language-threading actually happened) and returns a scripted result
     /// after an optional artificial delay (so overflow scenarios can be
     /// constructed deterministically).
     struct FakeTranscriber {
         strategies_seen: std::sync::Mutex<Vec<DecodeStrategy>>,
+        languages_seen: std::sync::Mutex<Vec<Option<String>>>,
         delay: std::time::Duration,
     }
 
@@ -1355,6 +1360,7 @@ mod tests {
         fn new(delay: std::time::Duration) -> Self {
             Self {
                 strategies_seen: std::sync::Mutex::new(Vec::new()),
+                languages_seen: std::sync::Mutex::new(Vec::new()),
                 delay,
             }
         }
@@ -1367,6 +1373,10 @@ mod tests {
             options: DecodeOptions,
         ) -> anyhow::Result<TranscriptResult> {
             self.strategies_seen.lock().unwrap().push(options.strategy);
+            self.languages_seen
+                .lock()
+                .unwrap()
+                .push(options.language.clone());
             if !self.delay.is_zero() {
                 tokio::time::sleep(self.delay).await;
             }
@@ -1426,6 +1436,7 @@ mod tests {
             rx,
             &transcriber,
             DecodeStrategy::Greedy,
+            None,
             TranscriptionSession::new(),
             |result, start_ms, end_ms| {
                 emitted.push((result.text.clone(), start_ms, end_ms));
@@ -1452,6 +1463,7 @@ mod tests {
             rx,
             &transcriber,
             DecodeStrategy::BeamSearch { beam_size: 5 },
+            None,
             TranscriptionSession::new(),
             |_, _, _| async {},
         )
@@ -1477,6 +1489,7 @@ mod tests {
                 rx,
                 &transcriber,
                 DecodeStrategy::Greedy,
+                None,
                 TranscriptionSession::new(),
                 |_, _, _| async {},
             )
@@ -1492,5 +1505,27 @@ mod tests {
 
         let session = worker.await.unwrap();
         assert!(session.transcript.contains("4 samples"));
+    }
+
+    #[tokio::test]
+    async fn worker_loop_threads_source_lang_through_decode_options() {
+        let (tx, rx) = mpsc::channel(4);
+        tx.send(closed_segment(4, 0)).await.unwrap();
+        drop(tx);
+
+        let transcriber = FakeTranscriber::new(std::time::Duration::ZERO);
+        worker_loop(
+            rx,
+            &transcriber,
+            DecodeStrategy::Greedy,
+            Some("pt".to_string()),
+            TranscriptionSession::new(),
+            |_, _, _| async {},
+        )
+        .await;
+
+        let languages = transcriber.languages_seen.lock().unwrap().clone();
+        assert_eq!(languages.len(), 1);
+        assert_eq!(languages[0], Some("pt".to_string()));
     }
 }

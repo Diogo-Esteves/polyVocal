@@ -10,6 +10,9 @@ pub struct AppConfig {
     pub input_device: Option<String>,
     /// Default target language for translation.
     pub target_lang: Option<String>,
+    /// User-pinned transcription source language (ISO 639-1, e.g. "en"), to
+    /// skip Whisper's per-segment auto-detect. `None` = auto-detect.
+    pub source_lang: Option<String>,
     /// Enable streaming partial transcriptions (real-time text while speaking).
     pub streaming_partials_enabled: bool,
 }
@@ -68,6 +71,7 @@ mod tests {
         let original = AppConfig {
             input_device: Some("device_123".to_string()),
             target_lang: Some("en".to_string()),
+            source_lang: Some("pt".to_string()),
             streaming_partials_enabled: true,
         };
 
@@ -89,15 +93,16 @@ mod tests {
     fn test_load_toml_with_missing_new_field_preserves_existing_fields() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("config.toml");
-        // Write a TOML file with only the pre-existing fields (no streaming_partials_enabled).
+        // Write a TOML file with only the pre-existing fields (no streaming_partials_enabled or source_lang).
         let contents = r#"input_device = "device_123"
 target_lang = "en"
 "#;
         std::fs::write(&path, contents).unwrap();
         let config = load(&path);
-        // Verify that the existing fields are preserved and the missing field defaults to false.
+        // Verify that the existing fields are preserved and the missing fields default correctly.
         assert_eq!(config.input_device, Some("device_123".to_string()));
         assert_eq!(config.target_lang, Some("en".to_string()));
+        assert_eq!(config.source_lang, None);
         assert!(!config.streaming_partials_enabled);
     }
 }

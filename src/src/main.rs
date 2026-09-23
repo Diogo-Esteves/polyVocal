@@ -134,6 +134,7 @@ fn App() -> impl IntoView {
         );
     });
     let target_lang = RwSignal::new("pt".to_string());
+    let source_lang = RwSignal::new(None::<String>);
     let settings_open = RwSignal::new(false);
     let history_open = RwSignal::new(false);
     // The sheets return focus to whichever header button opened them —
@@ -159,6 +160,7 @@ fn App() -> impl IntoView {
         let cfg = AppConfig {
             input_device: selected_device_id.get_untracked(),
             target_lang: Some(target_lang.get_untracked()),
+            source_lang: source_lang.get_untracked(),
             streaming_partials_enabled: streaming_partials_enabled.get_untracked(),
         };
         spawn_local(async move {
@@ -281,6 +283,7 @@ fn App() -> impl IntoView {
             if let Some(lang) = cfg.target_lang {
                 target_lang.set(lang);
             }
+            source_lang.set(cfg.source_lang);
             streaming_partials_enabled.set(cfg.streaming_partials_enabled);
         }
     });
@@ -614,6 +617,26 @@ fn App() -> impl IntoView {
                                     <option value="auto">{ThemeMode::Auto.label()}</option>
                                     <option value="light">{ThemeMode::Light.label()}</option>
                                     <option value="dark">{ThemeMode::Dark.label()}</option>
+                                </select>
+                            </div>
+
+                            <div class="settings-row">
+                                <label for="source-language-select">"Source language"</label>
+                                <select
+                                    id="source-language-select"
+                                    aria-label="Source language"
+                                    prop:value=move || source_lang.get().unwrap_or_default()
+                                    on:change=move |ev| {
+                                        let val = event_target_value(&ev);
+                                        source_lang.set(if val.is_empty() { None } else { Some(val) });
+                                        persist_config();
+                                    }
+                                >
+                                    <option value="">"Auto-detect"</option>
+                                    {TARGET_LANGUAGES
+                                        .iter()
+                                        .map(|(code, label)| view! { <option value=*code>{*label}</option> })
+                                        .collect_view()}
                                 </select>
                             </div>
 
