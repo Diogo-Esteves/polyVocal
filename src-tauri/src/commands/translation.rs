@@ -55,6 +55,11 @@ fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// itself — unlike LibreTranslate, the local OPUS-MT engine has no
 /// server-side auto-detect to delegate an `"auto"` source to, so this is
 /// resolved to a concrete language up front instead.
+///
+/// To avoid truncation on long transcripts (which exceed the model's token
+/// limit when passed as a single string), segments are translated
+/// individually and joined with spaces. Sessions without persisted segments
+/// fall back to translating the full transcript at once.
 async fn translate_session(
     repository: &SessionRepository,
     translator: &impl Translator,
@@ -74,10 +79,31 @@ async fn translate_session(
             .to_string(),
     };
 
-    let translated = translator
-        .translate(&session.transcript, &source_lang, target_lang)
+    let segments = repository
+        .segments(session_id)
         .await
         .map_err(|e| e.to_string())?;
+
+    let translated = if !segments.is_empty() {
+        let mut translated_parts = Vec::new();
+        for segment in segments {
+            let trimmed = segment.text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let translated_text = translator
+                .translate(trimmed, &source_lang, target_lang)
+                .await
+                .map_err(|e| e.to_string())?;
+            translated_parts.push(translated_text);
+        }
+        translated_parts.join(" ")
+    } else {
+        translator
+            .translate(&session.transcript, &source_lang, target_lang)
+            .await
+            .map_err(|e| e.to_string())?
+    };
 
     repository
         .update_translation(session_id, &translated, target_lang)
@@ -323,6 +349,135 @@ mod tests {
             .expect("session should still exist");
         assert_eq!(unchanged.translation, None);
         assert_eq!(unchanged.target_lang, None);
+    }
+
+    #[tokio::test]
+    async fn test_translate_session_translates_segments_individually_and_joins_them() {
+        use crate::storage::models::TranscriptSegment;
+
+        let pool = test_pool().await;
+        let repository = SessionRepository::new(pool);
+        let session = Session::new("hello world".to_string(), Some("en".to_string()), 2000);
+        repository
+            .save(&session)
+            .await
+            .expect("session should save");
+
+        repository
+            .append_segment(&TranscriptSegment::new(
+                &session.id,
+                "hello",
+                Some("en"),
+                0,
+                900,
+            ))
+            .await
+            .expect("first segment should insert");
+
+        repository
+            .append_segment(&TranscriptSegment::new(
+                &session.id,
+                "world",
+                Some("en"),
+                1200,
+                2000,
+            ))
+            .await
+            .expect("second segment should insert");
+
+        let translated = translate_session(&repository, &EchoSourceTranslator, &session.id, "pt")
+            .await
+            .expect("translation should succeed");
+
+        assert_eq!(translated, "[en] translated [en] translated");
+
+        let updated = repository
+            .get(&session.id)
+            .await
+            .expect("get should succeed")
+            .expect("session should still exist");
+        assert_eq!(
+            updated.translation.as_deref(),
+            Some("[en] translated [en] translated")
+        );
+        assert_eq!(updated.target_lang.as_deref(), Some("pt"));
+    }
+
+    #[tokio::test]
+    async fn test_translate_session_skips_empty_segments() {
+        use crate::storage::models::TranscriptSegment;
+
+        let pool = test_pool().await;
+        let repository = SessionRepository::new(pool);
+        let session = Session::new("hello world".to_string(), Some("en".to_string()), 2000);
+        repository
+            .save(&session)
+            .await
+            .expect("session should save");
+
+        repository
+            .append_segment(&TranscriptSegment::new(
+                &session.id,
+                "hello",
+                Some("en"),
+                0,
+                900,
+            ))
+            .await
+            .expect("first segment should insert");
+
+        repository
+            .append_segment(&TranscriptSegment::new(
+                &session.id,
+                "  ",
+                Some("en"),
+                1000,
+                1100,
+            ))
+            .await
+            .expect("empty segment should insert");
+
+        repository
+            .append_segment(&TranscriptSegment::new(
+                &session.id,
+                "world",
+                Some("en"),
+                1200,
+                2000,
+            ))
+            .await
+            .expect("third segment should insert");
+
+        let translated = translate_session(&repository, &EchoSourceTranslator, &session.id, "pt")
+            .await
+            .expect("translation should succeed");
+
+        assert_eq!(translated, "[en] translated [en] translated");
+    }
+
+    #[tokio::test]
+    async fn test_translate_session_falls_back_to_full_transcript_when_no_segments() {
+        let pool = test_pool().await;
+        let repository = SessionRepository::new(pool);
+        let session = Session::new("Hello world".to_string(), Some("en".to_string()), 1000);
+        repository
+            .save(&session)
+            .await
+            .expect("session should save");
+
+        let translated = translate_session(&repository, &EchoSourceTranslator, &session.id, "pt")
+            .await
+            .expect("translation should succeed");
+
+        assert_eq!(translated, "[en] translated");
+
+        let updated = repository
+            .get(&session.id)
+            .await
+            .expect("get should succeed")
+            .expect("session should still exist");
+        assert_eq!(updated.translation.as_deref(), Some("[en] translated"));
+        assert_eq!(updated.target_lang.as_deref(), Some("pt"));
     }
 
     /// Exercises real candle + OPUS-MT inference end to end — downloads the
