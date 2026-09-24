@@ -13,8 +13,8 @@ mod shortcuts;
 mod theme;
 
 use commands::audio::{
-    list_input_devices, start_recording, stop_recording, AudioLevel, InputDevice,
-    TranscriptPartial, TranscriptSegment,
+    list_input_devices, start_recording, stop_recording, AudioLevel, CalibrationResultEvent,
+    InputDevice, TranscriptPartial, TranscriptSegment,
 };
 use commands::config::{get_config, set_config, AppConfig};
 use commands::models::{
@@ -266,6 +266,34 @@ fn App() -> impl IntoView {
         };
         while let Some(event) = events.next().await {
             audio_level.set(event.payload.level);
+        }
+    });
+
+    // Listen for calibration results (#190) to surface tier downgrades or
+    // disabled streaming partials as toast notifications.
+    spawn_local(async move {
+        let mut events =
+            match tauri_sys::event::listen::<CalibrationResultEvent>("calibration:result").await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    push_toast.run(format!("failed to listen for calibration events: {e}"));
+                    return;
+                }
+            };
+        while let Some(event) = events.next().await {
+            let result = event.payload;
+            if result.selected_tier != result.requested_tier {
+                push_toast.run(format!(
+                    "Running at {} (your machine can't keep up with {})",
+                    result.selected_tier.label(),
+                    result.requested_tier.label()
+                ));
+            } else if streaming_partials_enabled.get_untracked()
+                && !result.streaming_partials_available
+            {
+                push_toast
+                    .run("Live partial text disabled — this machine can't keep up".to_string());
+            }
         }
     });
 
