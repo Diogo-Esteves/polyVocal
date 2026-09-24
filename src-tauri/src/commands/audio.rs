@@ -7,6 +7,7 @@ use crate::models::registry::{ModelSize, VadModel};
 use crate::storage::models::TranscriptSegment;
 use crate::storage::repository::SessionRepository;
 use crate::transcription::calibration::{self, CalibrationResult};
+use crate::transcription::calibration_cache;
 use crate::transcription::engine::{
     DecodeOptions, DecodeStrategy, TranscriptResult, TranscriptionEngine,
 };
@@ -388,31 +389,66 @@ async fn start_recording_inner(
     // no other `start_recording` call can also enter calibration while this
     // one is running, without needing to hold the lock for calibration's
     // (up to a minute long) duration.
-    let (engine, default_strategy, calibrated_tier) = {
-        let manager = manager.clone();
-        let pcm = pcm.clone();
-        tokio::task::spawn_blocking(
-            move || -> Result<(Arc<TranscriptionEngine>, DecodeStrategy, ModelSize), String> {
-                Ok(select_engine_and_strategy(
-                    starting_tier,
-                    starting_engine,
-                    &downloaded_tiers,
-                    |tier| TranscriptionEngine::load(manager.model_path(&tier)).map(Arc::new),
-                    |engine, strategy| {
-                        let options = DecodeOptions {
-                            strategy,
-                            ..DecodeOptions::default()
-                        };
-                        let start = std::time::Instant::now();
-                        engine.transcribe(&pcm, &options)?;
-                        Ok(start.elapsed().as_secs_f64() / calibration::CALIBRATION_AUDIO_SECS)
-                    },
-                ))
-            },
-        )
-        .await
-        .map_err(|e| format!("calibration task panicked: {e}"))??
-    };
+    //
+    // On cache hit: skip real calibration entirely. On miss: run real
+    // calibration and persist the verdict for future recordings (#185).
+    let cache_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("calibration_cache.json");
+
+    let (engine, default_strategy, calibrated_tier) =
+        match calibration_cache::read(&cache_path, starting_tier) {
+            Some(cached) => {
+                tracing::info!(
+                    model_size = ?cached.model_size,
+                    strategy = ?cached.strategy,
+                    "using cached startup calibration result"
+                );
+                let engine = if cached.model_size == starting_tier {
+                    starting_engine.clone()
+                } else {
+                    let manager = manager.clone();
+                    let model_size = cached.model_size;
+                    tokio::task::spawn_blocking(move || {
+                        TranscriptionEngine::load(manager.model_path(&model_size)).map(Arc::new)
+                    })
+                    .await
+                    .map_err(|e| format!("engine load task panicked: {e}"))?
+                    .map_err(|e| e.to_string())?
+                };
+                (engine, cached.strategy, cached.model_size)
+            }
+            None => {
+                let manager = manager.clone();
+                let pcm = pcm.clone();
+                let result = tokio::task::spawn_blocking(
+                move || -> Result<(Arc<TranscriptionEngine>, DecodeStrategy, ModelSize), String> {
+                    Ok(select_engine_and_strategy(
+                        starting_tier,
+                        starting_engine,
+                        &downloaded_tiers,
+                        |tier| TranscriptionEngine::load(manager.model_path(&tier)).map(Arc::new),
+                        |engine, strategy| {
+                            let options = DecodeOptions {
+                                strategy,
+                                ..DecodeOptions::default()
+                            };
+                            let start = std::time::Instant::now();
+                            engine.transcribe(&pcm, &options)?;
+                            Ok(start.elapsed().as_secs_f64() / calibration::CALIBRATION_AUDIO_SECS)
+                        },
+                    ))
+                },
+            )
+            .await
+            .map_err(|e| format!("calibration task panicked: {e}"))??;
+
+                calibration_cache::write(&cache_path, starting_tier, result.2, result.1);
+                result
+            }
+        };
 
     // Load a Tiny engine for streaming partials if enabled and if the machine
     // can keep up. Kept separate from the session engine (which may be any tier)

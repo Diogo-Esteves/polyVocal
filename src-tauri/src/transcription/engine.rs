@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
@@ -21,7 +22,7 @@ pub struct DecodeOptions {
     pub token_timestamps: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecodeStrategy {
     /// ~5x cheaper than beam search; the live-capture default (see #144).
     Greedy,
