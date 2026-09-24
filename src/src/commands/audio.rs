@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::commands::models::ModelSize;
+
 /// Mirrors the `transcript:segment` event payload emitted by the Rust
 /// backend (DEC-007) — only the fields this screen renders are declared;
 /// serde ignores the rest.
@@ -26,6 +28,19 @@ pub struct TranscriptPartial {
 #[derive(Deserialize, Clone)]
 pub struct AudioLevel {
     pub level: f32,
+}
+
+/// Mirrors the `calibration:result` event payload emitted by the Rust
+/// backend (#190) — the calibration verdict for this recording session,
+/// so a silent tier/strategy downgrade (or a silently-disabled streaming-
+/// partials opt-in) can be surfaced to the user as a toast notification.
+#[derive(Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct CalibrationResultEvent {
+    pub requested_tier: ModelSize,
+    pub selected_tier: ModelSize,
+    pub used_beam_search: bool,
+    pub streaming_partials_available: bool,
 }
 
 #[derive(Serialize)]

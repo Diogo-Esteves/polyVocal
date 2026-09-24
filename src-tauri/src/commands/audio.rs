@@ -88,6 +88,18 @@ struct AudioLevelEvent {
     level: f32,
 }
 
+/// Payload for the `calibration:result` event (#190) — the calibration
+/// verdict for this recording session, so a silent tier/strategy
+/// downgrade (or a silently-disabled streaming-partials opt-in) can be
+/// surfaced instead of only ever appearing in a `tracing::info!` line.
+#[derive(Clone, Serialize)]
+struct CalibrationResultEvent {
+    requested_tier: ModelSize,
+    selected_tier: ModelSize,
+    used_beam_search: bool,
+    streaming_partials_available: bool,
+}
+
 /// Target rate for `audio:level` emissions — the frontend only needs enough
 /// of them to read as live motion, and every emission is extra work on the
 /// same task that drains the capture channel (issue #45), so this stays
@@ -376,11 +388,11 @@ async fn start_recording_inner(
     // no other `start_recording` call can also enter calibration while this
     // one is running, without needing to hold the lock for calibration's
     // (up to a minute long) duration.
-    let (engine, default_strategy) = {
+    let (engine, default_strategy, calibrated_tier) = {
         let manager = manager.clone();
         let pcm = pcm.clone();
         tokio::task::spawn_blocking(
-            move || -> Result<(Arc<TranscriptionEngine>, DecodeStrategy), String> {
+            move || -> Result<(Arc<TranscriptionEngine>, DecodeStrategy, ModelSize), String> {
                 Ok(select_engine_and_strategy(
                     starting_tier,
                     starting_engine,
@@ -497,6 +509,11 @@ async fn start_recording_inner(
     let repository = SessionRepository::new(pool.inner().clone());
 
     let (queue_tx, queue_rx) = mpsc::channel::<ClosedSegment>(SEGMENT_QUEUE_CAPACITY);
+
+    // Check whether streaming_engine was successfully loaded before it's moved
+    // into the producer task closure, so we can emit the calibration result
+    // later with the accurate availability status.
+    let streaming_partials_were_loaded = streaming_engine.is_some();
 
     let producer_task: JoinHandle<RecordingStats> = tokio::spawn({
         let app = app.clone();
@@ -698,6 +715,16 @@ async fn start_recording_inner(
         worker_task,
     });
 
+    let payload = CalibrationResultEvent {
+        requested_tier: starting_tier,
+        selected_tier: calibrated_tier,
+        used_beam_search: matches!(default_strategy, DecodeStrategy::BeamSearch { .. }),
+        streaming_partials_available: streaming_partials_were_loaded,
+    };
+    if let Err(e) = app.emit("calibration:result", &payload) {
+        tracing::error!("failed to emit calibration:result event: {e}");
+    }
+
     Ok(())
 }
 
@@ -713,13 +740,17 @@ async fn start_recording_inner(
 /// picked never actually loaded (#144). Generic over the engine/loader
 /// types so this orchestration logic is unit-testable without real Whisper
 /// models — see the tests below.
+///
+/// Returns `(engine, strategy, model_size)` where `model_size` is the tier
+/// that the returned engine actually is (the calibration-selected tier, or
+/// `starting_tier` if the selected tier's model failed to load).
 fn select_engine_and_strategy<E, L, M>(
     starting_tier: ModelSize,
     starting_engine: E,
     downloaded_tiers: &[ModelSize],
     mut load_engine: L,
     mut measure: M,
-) -> (E, DecodeStrategy)
+) -> (E, DecodeStrategy, ModelSize)
 where
     E: Clone,
     L: FnMut(ModelSize) -> anyhow::Result<E>,
@@ -751,7 +782,7 @@ where
     );
 
     match loaded.iter().find(|(size, _)| *size == model_size) {
-        Some((_, engine)) => (engine.clone(), strategy),
+        Some((_, engine)) => (engine.clone(), strategy, model_size),
         None => {
             tracing::warn!(
                 ?model_size,
@@ -765,7 +796,7 @@ where
                 .expect(
                     "starting_tier's engine is loaded before calibration begins and never removed",
                 );
-            (engine, DecodeStrategy::Greedy)
+            (engine, DecodeStrategy::Greedy, starting_tier)
         }
     }
 }
@@ -799,7 +830,11 @@ mod select_engine_and_strategy_tests {
 
         assert_eq!(
             result,
-            ("small-engine", DecodeStrategy::BeamSearch { beam_size: 5 })
+            (
+                "small-engine",
+                DecodeStrategy::BeamSearch { beam_size: 5 },
+                ModelSize::Small
+            )
         );
     }
 
@@ -825,7 +860,10 @@ mod select_engine_and_strategy_tests {
             },
         );
 
-        assert_eq!(result, ("medium-engine", DecodeStrategy::Greedy));
+        assert_eq!(
+            result,
+            ("medium-engine", DecodeStrategy::Greedy, ModelSize::Medium)
+        );
     }
 
     #[test]
@@ -845,7 +883,11 @@ mod select_engine_and_strategy_tests {
 
         assert_eq!(
             result,
-            ("tiny-engine", DecodeStrategy::BeamSearch { beam_size: 5 })
+            (
+                "tiny-engine",
+                DecodeStrategy::BeamSearch { beam_size: 5 },
+                ModelSize::Tiny
+            )
         );
     }
 }
