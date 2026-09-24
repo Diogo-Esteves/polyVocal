@@ -14,6 +14,11 @@ pub struct DecodeOptions {
     pub n_threads: std::os::raw::c_int,
     /// `None` = auto-detect (whisper.cpp default, DEC-003).
     pub language: Option<String>,
+    /// Whether to extract per-token `Word` timing via whisper.cpp's
+    /// token-timestamp pass — extra per-token cost with no free lunch, so
+    /// default off; enable only for a caller that will actually consume
+    /// `Segment::words` (#184).
+    pub token_timestamps: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +36,7 @@ impl Default for DecodeOptions {
             strategy: DecodeStrategy::Greedy,
             n_threads: default_n_threads(),
             language: None,
+            token_timestamps: false,
         }
     }
 }
@@ -99,7 +105,7 @@ impl TranscriptionEngine {
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
-        params.set_token_timestamps(true);
+        params.set_token_timestamps(options.token_timestamps);
 
         state
             .full(params, pcm)
@@ -274,7 +280,13 @@ mod tests {
 
         let pcm = vec![0.0f32; 16000]; // 1 second of silence at 16kHz
         let result = engine
-            .transcribe(&pcm, &DecodeOptions::default())
+            .transcribe(
+                &pcm,
+                &DecodeOptions {
+                    token_timestamps: true,
+                    ..DecodeOptions::default()
+                },
+            )
             .expect("real inference should not fail");
 
         // Verify segments exist and at least one has words.
