@@ -125,8 +125,10 @@ pub fn SessionDetailSheet(
             return;
         };
         spawn_local(async move {
-            if let Err(e) = export_session_txt(&id).await {
-                push_toast.run(e);
+            match export_session_txt(&id).await {
+                Ok(Some(path)) => push_toast.run(format!("Exported to {path}")),
+                Ok(None) => {}
+                Err(e) => push_toast.run(e),
             }
         });
     };
@@ -137,8 +139,10 @@ pub fn SessionDetailSheet(
             return;
         };
         spawn_local(async move {
-            if let Err(e) = export_session_srt(&id).await {
-                push_toast.run(e);
+            match export_session_srt(&id).await {
+                Ok(Some(path)) => push_toast.run(format!("Exported to {path}")),
+                Ok(None) => {}
+                Err(e) => push_toast.run(e),
             }
         });
     };
@@ -241,9 +245,14 @@ pub fn SessionDetailSheet(
                     let duration = format_duration_label(session.duration_ms);
                     let original_text = session.transcript.clone();
                     let translated_text = session.translation.clone().unwrap_or_default();
+                    let status_note = if session.status != "complete" {
+                        " · Interrupted".to_string()
+                    } else {
+                        String::new()
+                    };
                     view! {
                         <div class="session-detail">
-                            <p class="session-detail-meta">{language}" · "{duration}</p>
+                            <p class="session-detail-meta">{language}" · "{duration}{status_note}</p>
                             <div class="session-detail-text">
                                 {move || match view_mode.get() {
                                     SessionView::Original => original_text.clone(),

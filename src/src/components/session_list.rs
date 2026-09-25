@@ -57,6 +57,11 @@ pub fn SessionList(
                             } else {
                                 String::new()
                             };
+                            let status_note = if session.status != "complete" {
+                                " · Interrupted".to_string()
+                            } else {
+                                String::new()
+                            };
                             let open_id = id.clone();
                             let delete_id = id.clone();
                             let is_confirming_id = id.clone();
@@ -72,7 +77,7 @@ pub fn SessionList(
                                         }
                                     >
                                         <p class="session-preview">{preview}</p>
-                                        <p class="session-meta">{language_label}" · "{created_at}{translation_note}</p>
+                                        <p class="session-meta">{language_label}" · "{created_at}{translation_note}{status_note}</p>
                                     </button>
                                     <button
                                         class="session-card-delete"
