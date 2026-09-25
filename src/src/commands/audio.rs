@@ -43,6 +43,15 @@ pub struct CalibrationResultEvent {
     pub streaming_partials_available: bool,
 }
 
+/// Mirrors the `provisioning:finished` event payload emitted by the Rust
+/// backend — signals completion of model provisioning with success/failure.
+#[derive(Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProvisioningFinishedEvent {
+    pub success: bool,
+    pub error: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartRecordingArgs {

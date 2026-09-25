@@ -15,6 +15,7 @@ pub struct Session {
     pub transcript: String,
     pub translation: Option<String>,
     pub target_lang: Option<String>,
+    pub status: String,
 }
 
 #[derive(Serialize)]

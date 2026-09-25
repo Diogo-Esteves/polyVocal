@@ -9,8 +9,16 @@ pub mod transcription;
 mod translation;
 pub mod vad;
 
+use serde::Serialize;
+use tauri::Emitter;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tracing::{error, info, warn};
+
+#[derive(Clone, Serialize)]
+struct ProvisioningFinishedEvent {
+    success: bool,
+    error: Option<String>,
+}
 
 pub fn run() {
     // Built here rather than inline in `.run()` below so the bundle
@@ -83,7 +91,24 @@ pub fn run() {
             // "no active model" / "VAD model not found" error paths.
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = commands::models::ensure_default_models(&app_handle).await {
+                if let Err(e) = app_handle.emit("provisioning:started", ()) {
+                    warn!("failed to emit provisioning:started event: {e}");
+                }
+                let result = commands::models::ensure_default_models(&app_handle).await;
+                let payload = match &result {
+                    Ok(()) => ProvisioningFinishedEvent {
+                        success: true,
+                        error: None,
+                    },
+                    Err(e) => ProvisioningFinishedEvent {
+                        success: false,
+                        error: Some(e.to_string()),
+                    },
+                };
+                if let Err(e) = app_handle.emit("provisioning:finished", &payload) {
+                    warn!("failed to emit provisioning:finished event: {e}");
+                }
+                if let Err(e) = result {
                     warn!("failed to provision default models: {e}");
                 }
             });

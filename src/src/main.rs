@@ -14,7 +14,7 @@ mod theme;
 
 use commands::audio::{
     list_input_devices, start_recording, stop_recording, AudioLevel, CalibrationResultEvent,
-    InputDevice, TranscriptPartial, TranscriptSegment,
+    InputDevice, ProvisioningFinishedEvent, TranscriptPartial, TranscriptSegment,
 };
 use commands::config::{get_config, set_config, AppConfig};
 use commands::models::{
@@ -293,6 +293,36 @@ fn App() -> impl IntoView {
             {
                 push_toast
                     .run("Live partial text disabled — this machine can't keep up".to_string());
+            }
+        }
+    });
+
+    // Listen for model provisioning events (#193) to surface setup progress
+    // and failures during first launch.
+    spawn_local(async move {
+        let mut started_events = match tauri_sys::event::listen::<()>("provisioning:started").await
+        {
+            Ok(stream) => stream,
+            Err(_) => return,
+        };
+        while started_events.next().await.is_some() {
+            push_toast.run("Setting up — downloading required models…".to_string());
+        }
+    });
+
+    spawn_local(async move {
+        let mut finished_events =
+            match tauri_sys::event::listen::<ProvisioningFinishedEvent>("provisioning:finished")
+                .await
+            {
+                Ok(stream) => stream,
+                Err(_) => return,
+            };
+        while let Some(event) = finished_events.next().await {
+            if !event.payload.success {
+                if let Some(error) = event.payload.error {
+                    push_toast.run(format!("Model setup failed: {}", error));
+                }
             }
         }
     });
