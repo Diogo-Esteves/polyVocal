@@ -49,6 +49,11 @@ pub const SESSION_PREVIEW_COUNT: usize = 3;
 /// truncated with a trailing "…".
 pub const SESSION_PREVIEW_CHAR_LIMIT: usize = 80;
 
+/// Sessions fetched per `list_sessions` page — also the signal used to
+/// guess whether another page might exist (a page shorter than this means
+/// there's nothing more to fetch, see #192).
+pub const SESSION_PAGE_SIZE: i64 = 20;
+
 /// Truncates `transcript` to at most `max_chars` characters, appending "…"
 /// when it was actually cut short. Counts by `char`, not byte, so this is
 /// safe on multi-byte UTF-8 transcripts (translated/non-English sessions).

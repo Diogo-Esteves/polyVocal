@@ -1,5 +1,7 @@
 use crate::commands::storage::{delete_session, Session};
-use crate::format::{truncate_preview, SESSION_PREVIEW_CHAR_LIMIT, SESSION_PREVIEW_COUNT};
+use crate::format::{
+    format_session_datetime, truncate_preview, SESSION_PREVIEW_CHAR_LIMIT, SESSION_PREVIEW_COUNT,
+};
 use crate::icons::Trash2;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -23,7 +25,10 @@ pub fn SessionList(
     sessions: RwSignal<Vec<Session>>,
     sessions_loading: RwSignal<bool>,
     sessions_expanded: RwSignal<bool>,
+    sessions_has_more: RwSignal<bool>,
+    sessions_loading_more: RwSignal<bool>,
     on_open: Callback<(String, web_sys::HtmlElement)>,
+    on_load_more: Callback<()>,
     push_toast: Callback<String>,
 ) -> impl IntoView {
     // Only one card can be in the "confirm delete?" state at a time — mirrors
@@ -50,7 +55,7 @@ pub fn SessionList(
                             let id = session.id.clone();
                             let preview = truncate_preview(&session.transcript, SESSION_PREVIEW_CHAR_LIMIT);
                             let language_label = session.language.clone().unwrap_or_else(|| "—".to_string());
-                            let created_at = session.created_at.clone();
+                            let created_at = format_session_datetime(&session.created_at);
                             let translation_note = if session.translation.is_some() {
                                 let target = session.target_lang.clone().unwrap_or_default();
                                 format!(" · → {target}")
@@ -120,6 +125,15 @@ pub fn SessionList(
                                 format!("View all {total} sessions")
                             }}
                         </button>
+                        {(sessions_expanded.get() && sessions_has_more.get()).then(|| view! {
+                            <button
+                                class="sessions-load-more"
+                                disabled=move || sessions_loading_more.get()
+                                on:click=move |_| on_load_more.run(())
+                            >
+                                {move || if sessions_loading_more.get() { "Loading…".to_string() } else { "Load more".to_string() }}
+                            </button>
+                        })}
                     })}
                 }.into_any()
             }
