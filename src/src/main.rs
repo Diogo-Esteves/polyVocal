@@ -29,7 +29,8 @@ use components::session_detail::SessionDetailSheet;
 use components::session_list::SessionList;
 use components::sheet::Sheet;
 use format::{
-    combine_partial_lines, format_elapsed, language_label, truncate_to_last_words, TARGET_LANGUAGES,
+    combine_partial_lines, format_elapsed, language_label, truncate_to_last_words,
+    SESSION_PAGE_SIZE, TARGET_LANGUAGES,
 };
 use icons::{History, Languages, Settings, TriangleAlert};
 use shortcuts::{apply_record_shortcut, stored_record_shortcut, RecordShortcutKey};
@@ -186,6 +187,8 @@ fn App() -> impl IntoView {
     // The history list is collapsed to the newest few by default so the live
     // transcript/translation stay in view — see SESSION_PREVIEW_COUNT.
     let sessions_expanded = RwSignal::new(false);
+    let sessions_has_more = RwSignal::new(false);
+    let sessions_loading_more = RwSignal::new(false);
 
     // The transcript is the screen, and it flows upward: newest segment at the
     // bottom, like a chat log. Pinning the scroll to the bottom whenever a
@@ -328,8 +331,11 @@ fn App() -> impl IntoView {
     });
 
     spawn_local(async move {
-        match list_sessions().await {
-            Ok(list) => sessions.set(list),
+        match list_sessions(SESSION_PAGE_SIZE, 0).await {
+            Ok(list) => {
+                sessions_has_more.set(list.len() as i64 == SESSION_PAGE_SIZE);
+                sessions.set(list);
+            }
             Err(e) => push_toast.run(e),
         }
         sessions_loading.set(false);
@@ -369,7 +375,8 @@ fn App() -> impl IntoView {
                         );
                         session_detail_id.set(Some(id));
                         spawn_local(async move {
-                            if let Ok(list) = list_sessions().await {
+                            if let Ok(list) = list_sessions(SESSION_PAGE_SIZE, 0).await {
+                                sessions_has_more.set(list.len() as i64 == SESSION_PAGE_SIZE);
                                 sessions.set(list);
                             }
                         });
@@ -388,6 +395,24 @@ fn App() -> impl IntoView {
                 }
             }
             busy.set(false);
+        });
+    };
+
+    let load_more_sessions = move || {
+        if sessions_loading_more.get_untracked() {
+            return;
+        }
+        sessions_loading_more.set(true);
+        let offset = sessions.get_untracked().len() as i64;
+        spawn_local(async move {
+            match list_sessions(SESSION_PAGE_SIZE, offset).await {
+                Ok(page) => {
+                    sessions_has_more.set(page.len() as i64 == SESSION_PAGE_SIZE);
+                    sessions.update(|list| list.extend(page));
+                }
+                Err(e) => push_toast.run(e),
+            }
+            sessions_loading_more.set(false);
         });
     };
 
@@ -462,7 +487,10 @@ fn App() -> impl IntoView {
                     sessions=sessions
                     sessions_loading=sessions_loading
                     sessions_expanded=sessions_expanded
+                    sessions_has_more=sessions_has_more
+                    sessions_loading_more=sessions_loading_more
                     on_open=on_open_session
+                    on_load_more=Callback::new(move |_| load_more_sessions())
                     push_toast=push_toast
                 />
             </aside>
@@ -745,7 +773,10 @@ fn App() -> impl IntoView {
                     sessions=sessions
                     sessions_loading=sessions_loading
                     sessions_expanded=sessions_expanded
+                    sessions_has_more=sessions_has_more
+                    sessions_loading_more=sessions_loading_more
                     on_open=on_open_session
+                    on_load_more=Callback::new(move |_| load_more_sessions())
                     push_toast=push_toast
                 />
             </Sheet>

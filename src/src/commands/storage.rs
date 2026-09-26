@@ -49,11 +49,11 @@ struct ExportSessionSrtArgs<'a> {
     id: &'a str,
 }
 
-/// Lists sessions with a default limit of 20 and offset of 0.
-pub async fn list_sessions() -> Result<Vec<Session>, String> {
+/// Lists sessions with the given limit and offset.
+pub async fn list_sessions(limit: i64, offset: i64) -> Result<Vec<Session>, String> {
     let args = ListSessionsArgs {
-        limit: Some(20),
-        offset: Some(0),
+        limit: Some(limit),
+        offset: Some(offset),
     };
     tauri_sys::core::invoke_result::<Vec<Session>, String>("list_sessions", args).await
 }
