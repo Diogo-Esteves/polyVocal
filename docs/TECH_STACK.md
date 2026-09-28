@@ -53,7 +53,7 @@ Tauri is a framework that wraps a web frontend (rendered via the OS's native Web
 ```
 whisper-rs (Rust) → whisper.cpp (C++) → runs locally, no Python
 ```
-Fast, self-contained, no Python runtime dependency.
+Fast, self-contained, no Python runtime dependency. Optional GPU support via the `gpu-vulkan` Cargo feature (Vulkan-capable AMD/Intel GPUs; off by default, auto-falls back to CPU at runtime if unavailable).
 
 ### Verdict
 🟢 **Best overall fit for PolyVocal.** Aligns with Rust preference, delivers the best performance, smallest binary, and has a clear path to mobile. The learning investment in Rust pays off long-term.

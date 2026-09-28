@@ -63,6 +63,11 @@ pub struct TranscriptionEngine {
 
 impl TranscriptionEngine {
     /// Load a Whisper model from disk.
+    ///
+    /// GPU execution (Vulkan) is controlled entirely by the `gpu-vulkan` Cargo feature.
+    /// When enabled, `WhisperContextParameters::default()` automatically sets `use_gpu: true`,
+    /// and whisper.cpp falls back to CPU at runtime if no compatible GPU/driver is present.
+    /// The feature is opt-in (off by default); see `Cargo.toml` for details.
     pub fn load(model_path: PathBuf) -> Result<Self> {
         if !model_path.exists() {
             return Err(anyhow!("Whisper model not found: {}", model_path.display()));
