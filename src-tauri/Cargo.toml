@@ -24,6 +24,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "polyvocal"
 path = "src/main.rs"
 
+# ─── Features ─────────────────────────────────────────────────────────────────
+
+[features]
+gpu-vulkan = ["whisper-rs/vulkan"]
+
 # ─── Core dependencies ────────────────────────────────────────────────────────
 
 [dependencies]
