@@ -20,7 +20,7 @@ use commands::config::{get_config, set_config, AppConfig};
 use commands::models::{
     download_model, list_models, set_active_model, ModelInfo, ModelSize, MODEL_PICKER_SIZES,
 };
-use commands::storage::{list_sessions, Session};
+use commands::storage::{list_sessions, search_sessions, Session};
 use commands::translation::{
     download_translation_model, list_translation_models, LanguagePairInfo,
 };
@@ -189,6 +189,10 @@ fn App() -> impl IntoView {
     let sessions_expanded = RwSignal::new(false);
     let sessions_has_more = RwSignal::new(false);
     let sessions_loading_more = RwSignal::new(false);
+
+    let search_query = RwSignal::new(String::new());
+    let search_results = RwSignal::new(Vec::<Session>::new());
+    let searching = RwSignal::new(false);
 
     // The transcript is the screen, and it flows upward: newest segment at the
     // bottom, like a chat log. Pinning the scroll to the bottom whenever a
@@ -416,6 +420,39 @@ fn App() -> impl IntoView {
         });
     };
 
+    let search_generation = RwSignal::new(0u32);
+    Effect::new(move |_| {
+        let query = search_query.get();
+        let gen = search_generation.get_untracked() + 1;
+        search_generation.set(gen);
+        if query.trim().is_empty() {
+            search_results.set(Vec::new());
+            searching.set(false);
+            return;
+        }
+        searching.set(true);
+        set_timeout(
+            move || {
+                if search_generation.get_untracked() != gen {
+                    return; // a newer keystroke superseded this one
+                }
+                spawn_local(async move {
+                    if search_generation.get_untracked() != gen {
+                        return;
+                    }
+                    match search_sessions(&query).await {
+                        Ok(results) => search_results.set(results),
+                        Err(e) => push_toast.run(e),
+                    }
+                    if search_generation.get_untracked() == gen {
+                        searching.set(false);
+                    }
+                });
+            },
+            Duration::from_millis(300),
+        );
+    });
+
     // Local record-toggle accelerator (#125) — window-scoped, not a
     // `tauri-plugin-global-shortcut` registration, so it's only live while
     // this window is focused. Only fires on the record screen (no sheet
@@ -483,6 +520,14 @@ fn App() -> impl IntoView {
             // here reacts to viewport size.
             <aside class="history-rail" aria-label="History">
                 <h2>"History"</h2>
+                <input
+                    type="search"
+                    class="session-search"
+                    placeholder="Search transcripts…"
+                    aria-label="Search session transcripts"
+                    prop:value=move || search_query.get()
+                    on:input=move |ev| search_query.set(event_target_value(&ev))
+                />
                 <SessionList
                     sessions=sessions
                     sessions_loading=sessions_loading
@@ -492,6 +537,9 @@ fn App() -> impl IntoView {
                     on_open=on_open_session
                     on_load_more=Callback::new(move |_| load_more_sessions())
                     push_toast=push_toast
+                    search_query=search_query
+                    search_results=search_results
+                    searching=searching
                 />
             </aside>
         <main class="app">
@@ -767,7 +815,16 @@ fn App() -> impl IntoView {
                 invoker=Signal::derive(move || {
                     history_toggle_ref.get().and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
                 })
-                header_extra=std::sync::Arc::new(|| ().into_any())
+                header_extra=std::sync::Arc::new(move || view! {
+                    <input
+                        type="search"
+                        class="session-search"
+                        placeholder="Search transcripts…"
+                        aria-label="Search session transcripts"
+                        prop:value=move || search_query.get()
+                        on:input=move |ev| search_query.set(event_target_value(&ev))
+                    />
+                }.into_any())
             >
                 <SessionList
                     sessions=sessions
@@ -778,6 +835,9 @@ fn App() -> impl IntoView {
                     on_open=on_open_session
                     on_load_more=Callback::new(move |_| load_more_sessions())
                     push_toast=push_toast
+                    search_query=search_query
+                    search_results=search_results
+                    searching=searching
                 />
             </Sheet>
 

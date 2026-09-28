@@ -49,6 +49,7 @@ pub fn run() {
             commands::translation::download_translation_model,
             // Storage
             commands::storage::list_sessions,
+            commands::storage::search_sessions,
             commands::storage::get_session,
             commands::storage::delete_session,
             commands::storage::export_session_txt,

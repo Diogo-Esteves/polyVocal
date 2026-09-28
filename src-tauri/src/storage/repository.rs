@@ -176,6 +176,32 @@ impl SessionRepository {
         Ok(sessions)
     }
 
+    /// Full-text search over session transcripts via the `sessions_fts`
+    /// virtual table (#209). `query` is treated as a literal phrase (quoted
+    /// and internal quotes escaped) rather than exposing FTS5's own query
+    /// syntax (AND/OR/NOT, column filters, prefix `*`, etc.) to end users —
+    /// a plain search box shouldn't require users to know FTS5 syntax, and
+    /// this avoids a malformed-query error from stray special characters.
+    pub async fn search(&self, query: &str, limit: i64) -> Result<Vec<Session>> {
+        let phrase = format!("\"{}\"", query.replace('"', "\"\""));
+        let sessions = sqlx::query_as::<_, Session>(
+            r#"
+            SELECT sessions.*
+              FROM sessions
+              JOIN sessions_fts ON sessions.rowid = sessions_fts.rowid
+             WHERE sessions_fts MATCH ?
+             ORDER BY rank
+             LIMIT ?
+            "#,
+        )
+        .bind(phrase)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(sessions)
+    }
+
     pub async fn get(&self, id: &str) -> Result<Option<Session>> {
         let session = sqlx::query_as::<_, Session>("SELECT * FROM sessions WHERE id = ?")
             .bind(id)
@@ -681,5 +707,61 @@ mod tests {
             .expect("segments table should exist")
             .get("count");
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_search_finds_sessions_by_distinctive_word() {
+        let repository = SessionRepository::new(test_pool().await);
+        let session1 = Session::new("hello world".to_string(), Some("en".to_string()), 100);
+        let session2 = Session::new("goodbye world".to_string(), Some("en".to_string()), 100);
+        repository
+            .save(&session1)
+            .await
+            .expect("save should succeed");
+        repository
+            .save(&session2)
+            .await
+            .expect("save should succeed");
+
+        let results = repository
+            .search("hello", 50)
+            .await
+            .expect("search should succeed");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, session1.id);
+        assert_eq!(results[0].transcript, "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_search_returns_empty_vec_for_no_matches() {
+        let repository = SessionRepository::new(test_pool().await);
+        let session = Session::new("hello world".to_string(), Some("en".to_string()), 100);
+        repository
+            .save(&session)
+            .await
+            .expect("save should succeed");
+
+        let results = repository
+            .search("nonexistent", 50)
+            .await
+            .expect("search should succeed");
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_handles_literal_quotes_without_error() {
+        let repository = SessionRepository::new(test_pool().await);
+        let session = Session::new("say \"hello\"".to_string(), Some("en".to_string()), 100);
+        repository
+            .save(&session)
+            .await
+            .expect("save should succeed");
+
+        let results = repository
+            .search("\"hello\"", 50)
+            .await
+            .expect("search should succeed");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, session.id);
     }
 }
