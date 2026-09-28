@@ -49,6 +49,12 @@ struct ExportSessionSrtArgs<'a> {
     id: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSessionsArgs<'a> {
+    query: &'a str,
+}
+
 /// Lists sessions with the given limit and offset.
 pub async fn list_sessions(limit: i64, offset: i64) -> Result<Vec<Session>, String> {
     let args = ListSessionsArgs {
@@ -56,6 +62,12 @@ pub async fn list_sessions(limit: i64, offset: i64) -> Result<Vec<Session>, Stri
         offset: Some(offset),
     };
     tauri_sys::core::invoke_result::<Vec<Session>, String>("list_sessions", args).await
+}
+
+/// Full-text searches sessions by transcript content (#209).
+pub async fn search_sessions(query: &str) -> Result<Vec<Session>, String> {
+    let args = SearchSessionsArgs { query };
+    tauri_sys::core::invoke_result::<Vec<Session>, String>("search_sessions", args).await
 }
 
 /// Fetches a specific session by ID.

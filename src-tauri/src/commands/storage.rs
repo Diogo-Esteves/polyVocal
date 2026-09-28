@@ -19,6 +19,18 @@ pub async fn list_sessions(
 }
 
 #[tauri::command]
+pub async fn search_sessions(
+    pool: State<'_, SqlitePool>,
+    query: String,
+) -> Result<Vec<Session>, String> {
+    let repository = SessionRepository::new(pool.inner().clone());
+    repository
+        .search(&query, 50)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_session(
     pool: State<'_, SqlitePool>,
     id: String,

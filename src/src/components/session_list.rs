@@ -30,6 +30,9 @@ pub fn SessionList(
     on_open: Callback<(String, web_sys::HtmlElement)>,
     on_load_more: Callback<()>,
     push_toast: Callback<String>,
+    #[prop(default = RwSignal::new(String::new()))] search_query: RwSignal<String>,
+    #[prop(default = RwSignal::new(Vec::new()))] search_results: RwSignal<Vec<Session>>,
+    #[prop(default = RwSignal::new(false))] searching: RwSignal<bool>,
 ) -> impl IntoView {
     // Only one card can be in the "confirm delete?" state at a time — mirrors
     // the session-detail sheet's own `pending_delete` signal.
@@ -37,7 +40,82 @@ pub fn SessionList(
 
     view! {
         {move || {
-            if sessions_loading.get() {
+            if !search_query.get().trim().is_empty() {
+                // Search mode is active
+                if searching.get() {
+                    view! { <p class="sessions-empty">"Searching…"</p> }.into_any()
+                } else if search_results.get().is_empty() {
+                    view! { <p class="sessions-empty">"No matching sessions."</p> }.into_any()
+                } else {
+                    let results = search_results.get();
+                    view! {
+                        <ul class="session-list">
+                            {results.into_iter().map(|session| {
+                                let id = session.id.clone();
+                                let preview = truncate_preview(&session.transcript, SESSION_PREVIEW_CHAR_LIMIT);
+                                let language_label = session.language.clone().unwrap_or_else(|| "—".to_string());
+                                let created_at = format_session_datetime(&session.created_at);
+                                let translation_note = if session.translation.is_some() {
+                                    let target = session.target_lang.clone().unwrap_or_default();
+                                    format!(" · → {target}")
+                                } else {
+                                    String::new()
+                                };
+                                let status_note = if session.status != "complete" {
+                                    " · Interrupted".to_string()
+                                } else {
+                                    String::new()
+                                };
+                                let open_id = id.clone();
+                                let delete_id = id.clone();
+                                let is_confirming_id = id.clone();
+                                let label_id = id.clone();
+                                view! {
+                                    <li class="session-item">
+                                        <button
+                                            class="session-card"
+                                            on:click=move |ev| {
+                                                if let Some(target) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok()) {
+                                                    on_open.run((open_id.clone(), target));
+                                                }
+                                            }
+                                        >
+                                            <p class="session-preview">{preview}</p>
+                                            <p class="session-meta">{language_label}" · "{created_at}{translation_note}{status_note}</p>
+                                        </button>
+                                        <button
+                                            class="session-card-delete"
+                                            class:is-confirming=move || card_pending_delete.get().as_deref() == Some(is_confirming_id.as_str())
+                                            aria-label=move || if card_pending_delete.get().as_deref() == Some(label_id.as_str()) {
+                                                "Confirm delete session"
+                                            } else {
+                                                "Delete session"
+                                            }
+                                            on:click=move |_| {
+                                                if card_pending_delete.get_untracked().as_deref() == Some(delete_id.as_str()) {
+                                                    let id = delete_id.clone();
+                                                    card_pending_delete.set(None);
+                                                    spawn_local(async move {
+                                                        if let Err(e) = delete_session(&id).await {
+                                                            push_toast.run(e);
+                                                        } else {
+                                                            search_results.update(|list| list.retain(|s| s.id != id));
+                                                        }
+                                                    });
+                                                } else {
+                                                    card_pending_delete.set(Some(delete_id.clone()));
+                                                }
+                                            }
+                                        >
+                                            <Trash2/>
+                                        </button>
+                                    </li>
+                                }
+                            }).collect_view()}
+                        </ul>
+                    }.into_any()
+                }
+            } else if sessions_loading.get() {
                 view! { <p class="sessions-empty">"Loading…"</p> }.into_any()
             } else if sessions.get().is_empty() {
                 view! { <p class="sessions-empty">"No sessions yet."</p> }.into_any()
