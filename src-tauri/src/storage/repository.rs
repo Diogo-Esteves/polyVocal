@@ -140,16 +140,18 @@ impl SessionRepository {
         transcript: &str,
         language: Option<&str>,
         duration_ms: i64,
+        audio_path: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO sessions (id, created_at, duration_ms, language, transcript, synced, status)
-            VALUES (?, ?, ?, ?, ?, 0, ?)
+            INSERT INTO sessions (id, created_at, duration_ms, language, transcript, synced, status, audio_path)
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 duration_ms = excluded.duration_ms,
                 language    = COALESCE(excluded.language, sessions.language),
                 transcript  = excluded.transcript,
-                status      = excluded.status
+                status      = excluded.status,
+                audio_path  = excluded.audio_path
             "#,
         )
         .bind(id)
@@ -158,6 +160,7 @@ impl SessionRepository {
         .bind(language)
         .bind(transcript)
         .bind(SESSION_STATUS_COMPLETE)
+        .bind(audio_path)
         .execute(&self.pool)
         .await?;
 
@@ -508,7 +511,7 @@ mod tests {
             .expect("append_segment should succeed");
 
         repository
-            .finalise("session-1", "hello world", Some("en"), 4_200)
+            .finalise("session-1", "hello world", Some("en"), 4_200, None)
             .await
             .expect("finalise should succeed");
 
@@ -543,7 +546,7 @@ mod tests {
             .expect("append_segment should succeed");
 
         repository
-            .finalise("session-1", "olá", None, 900)
+            .finalise("session-1", "olá", None, 900, None)
             .await
             .expect("finalise should succeed");
 
@@ -563,7 +566,7 @@ mod tests {
         let repository = SessionRepository::new(test_pool().await);
 
         repository
-            .finalise("session-1", "hello", Some("en"), 1_000)
+            .finalise("session-1", "hello", Some("en"), 1_000, None)
             .await
             .expect("finalise should succeed");
 

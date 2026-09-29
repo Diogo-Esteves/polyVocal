@@ -42,7 +42,21 @@ pub async fn get_session(
 #[tauri::command]
 pub async fn delete_session(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
     let repository = SessionRepository::new(pool.inner().clone());
-    repository.delete(&id).await.map_err(|e| e.to_string())
+    let audio_path = repository
+        .get(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|session| session.audio_path);
+
+    repository.delete(&id).await.map_err(|e| e.to_string())?;
+
+    if let Some(path) = audio_path {
+        if let Err(e) = std::fs::remove_file(&path) {
+            warn!("failed to remove retained audio file {path}: {e}");
+        }
+    }
+
+    Ok(())
 }
 
 /// Renders a session as plain text for the "export as TXT" (Phase 5) feature.
@@ -211,6 +225,7 @@ mod tests {
             target_lang: None,
             synced: 0,
             status: crate::storage::models::SESSION_STATUS_COMPLETE.to_string(),
+            audio_path: None,
         }
     }
 

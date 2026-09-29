@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub target_lang: Option<String>,
     pub source_lang: Option<String>,
     pub streaming_partials_enabled: bool,
+    pub retain_audio: bool,
 }
 
 #[derive(Serialize)]

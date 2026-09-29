@@ -15,6 +15,10 @@ pub struct AppConfig {
     pub source_lang: Option<String>,
     /// Enable streaming partial transcriptions (real-time text while speaking).
     pub streaming_partials_enabled: bool,
+    /// Save the raw recording audio to disk alongside the session (opt-in,
+    /// off by default — this app is privacy-first, so nothing is written
+    /// unless the user explicitly turns this on).
+    pub retain_audio: bool,
 }
 
 /// Loads configuration from the given path. Returns `AppConfig::default()` if
@@ -73,6 +77,7 @@ mod tests {
             target_lang: Some("en".to_string()),
             source_lang: Some("pt".to_string()),
             streaming_partials_enabled: true,
+            retain_audio: true,
         };
 
         save(&path, &original).unwrap();
@@ -93,7 +98,7 @@ mod tests {
     fn test_load_toml_with_missing_new_field_preserves_existing_fields() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("config.toml");
-        // Write a TOML file with only the pre-existing fields (no streaming_partials_enabled or source_lang).
+        // Write a TOML file with only the pre-existing fields (no streaming_partials_enabled, source_lang, or retain_audio).
         let contents = r#"input_device = "device_123"
 target_lang = "en"
 "#;
@@ -104,5 +109,6 @@ target_lang = "en"
         assert_eq!(config.target_lang, Some("en".to_string()));
         assert_eq!(config.source_lang, None);
         assert!(!config.streaming_partials_enabled);
+        assert!(!config.retain_audio);
     }
 }

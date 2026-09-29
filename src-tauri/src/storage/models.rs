@@ -28,6 +28,8 @@ pub struct Session {
     pub synced: i64,
     /// `in_progress` or `complete` — see the `SESSION_STATUS_*` constants.
     pub status: String,
+    /// Optional path to the retained audio file (WAV format, 16kHz mono, 16-bit PCM).
+    pub audio_path: Option<String>,
 }
 
 impl Session {
@@ -48,6 +50,7 @@ impl Session {
             target_lang: None,
             synced: 0,
             status: SESSION_STATUS_COMPLETE.to_string(),
+            audio_path: None,
         }
     }
 }
