@@ -16,6 +16,9 @@ pub struct Session {
     pub translation: Option<String>,
     pub target_lang: Option<String>,
     pub status: String,
+    /// Path to retained audio file (stored for future use in #213-#215).
+    #[allow(dead_code)]
+    pub audio_path: Option<String>,
 }
 
 #[derive(Serialize)]

@@ -180,6 +180,7 @@ fn streaming_feed_delta<'a>(buffer: &'a [f32], fed_len: &mut usize) -> Option<&'
 struct RecordingStats {
     dropped_capture_chunks: u64,
     dropped_queue_segments: u64,
+    audio_path: Option<String>,
 }
 
 /// Abstraction over "transcribe this audio", so the worker loop's own
@@ -536,6 +537,19 @@ async fn start_recording_inner(
 
     let session_id = transcription_session_id.to_string();
 
+    // Compute the audio file path before spawning the producer task if audio retention is enabled.
+    let audio_path: Option<std::path::PathBuf> = if config.retain_audio {
+        match app.path().app_data_dir() {
+            Ok(dir) => Some(dir.join("audio").join(format!("{session_id}.wav"))),
+            Err(e) => {
+                tracing::warn!("failed to resolve app data dir for audio retention: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // The session header row exists from the moment audio starts flowing, so
     // segments have something to attach to as they arrive and an interrupted
     // recording is still recoverable (DEC-009); `stop_recording` finalises
@@ -555,6 +569,30 @@ async fn start_recording_inner(
         let app = app.clone();
         let session_id = session_id.clone();
         async move {
+            // Initialize WAV writer if audio retention is enabled.
+            let mut audio_writer: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>> =
+                audio_path.as_ref().and_then(|path| {
+                    if let Some(parent) = path.parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            tracing::warn!("failed to create audio directory: {e}");
+                            return None;
+                        }
+                    }
+                    let spec = hound::WavSpec {
+                        channels: 1,
+                        sample_rate: 16_000,
+                        bits_per_sample: 16,
+                        sample_format: hound::SampleFormat::Int,
+                    };
+                    match hound::WavWriter::create(path, spec) {
+                        Ok(writer) => Some(writer),
+                        Err(e) => {
+                            tracing::warn!("failed to create audio file for retention: {e}");
+                            None
+                        }
+                    }
+                });
+
             let mut pipeline = pipeline;
             let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
             let mut rx = rx;
@@ -599,6 +637,19 @@ async fn start_recording_inner(
                         },
                     ) {
                         tracing::error!("failed to emit audio:level: {e}");
+                    }
+                }
+
+                // Write audio samples to WAV file if audio retention is enabled.
+                if let Some(writer) = audio_writer.as_mut() {
+                    for &sample in &chunk {
+                        let clamped = sample.clamp(-1.0, 1.0);
+                        let pcm16 = (clamped * i16::MAX as f32) as i16;
+                        if let Err(e) = writer.write_sample(pcm16) {
+                            tracing::warn!("failed to write audio sample: {e}");
+                            audio_writer = None; // stop trying once it's broken
+                            break;
+                        }
                     }
                 }
 
@@ -701,11 +752,22 @@ async fn start_recording_inner(
                 }
             }
 
+            // Finalize the WAV writer if it's still active.
+            let final_audio_path: Option<String> =
+                audio_writer.and_then(|writer| match writer.finalize() {
+                    Ok(()) => audio_path.as_ref().map(|p| p.display().to_string()),
+                    Err(e) => {
+                        tracing::warn!("failed to finalize audio file: {e}");
+                        None
+                    }
+                });
+
             // Dropping `queue_tx` here (end of scope) closes the queue, which is
             // `worker_loop`'s signal to stop draining and return.
             RecordingStats {
                 dropped_capture_chunks: capture_counters.dropped_frames.load(Ordering::Relaxed),
                 dropped_queue_segments: queue_drops,
+                audio_path: final_audio_path,
             }
         }
     });
@@ -1143,6 +1205,7 @@ async fn finish_recording(
             &session.transcript,
             session.detected_language.as_deref(),
             duration_ms,
+            stats.audio_path.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -1210,6 +1273,7 @@ mod tests {
             RecordingStats {
                 dropped_capture_chunks: 0,
                 dropped_queue_segments: 0,
+                audio_path: None,
             }
         });
         let worker_task = tokio::spawn(async move { session });
@@ -1270,6 +1334,7 @@ mod tests {
             RecordingStats {
                 dropped_capture_chunks: 0,
                 dropped_queue_segments: 0,
+                audio_path: None,
             }
         });
         let worker_task = tokio::spawn(async move { session });
@@ -1355,6 +1420,7 @@ mod tests {
             RecordingStats {
                 dropped_capture_chunks: 0,
                 dropped_queue_segments: 0,
+                audio_path: None,
             }
         });
         let worker_task = tokio::spawn(async { TranscriptionSession::new() });
@@ -1384,6 +1450,7 @@ mod tests {
             RecordingStats {
                 dropped_capture_chunks: 0,
                 dropped_queue_segments: 0,
+                audio_path: None,
             }
         });
         let worker_task: JoinHandle<TranscriptionSession> =

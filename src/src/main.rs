@@ -156,6 +156,7 @@ fn App() -> impl IntoView {
     // already used before this picker existed.
     let selected_device_id = RwSignal::new(None::<String>);
     let streaming_partials_enabled = RwSignal::new(false);
+    let retain_audio = RwSignal::new(false);
 
     let persist_config = move || {
         let cfg = AppConfig {
@@ -163,6 +164,7 @@ fn App() -> impl IntoView {
             target_lang: Some(target_lang.get_untracked()),
             source_lang: source_lang.get_untracked(),
             streaming_partials_enabled: streaming_partials_enabled.get_untracked(),
+            retain_audio: retain_audio.get_untracked(),
         };
         spawn_local(async move {
             if let Err(e) = set_config(cfg).await {
@@ -353,6 +355,7 @@ fn App() -> impl IntoView {
             }
             source_lang.set(cfg.source_lang);
             streaming_partials_enabled.set(cfg.streaming_partials_enabled);
+            retain_audio.set(cfg.retain_audio);
         }
     });
 
@@ -798,6 +801,19 @@ fn App() -> impl IntoView {
                                     prop:checked=move || streaming_partials_enabled.get()
                                     on:change=move |ev| {
                                         streaming_partials_enabled.set(event_target_checked(&ev));
+                                        persist_config();
+                                    }
+                                />
+                            </div>
+
+                            <div class="settings-row">
+                                <label for="retain-audio-checkbox">"Save recording audio"</label>
+                                <input
+                                    type="checkbox"
+                                    id="retain-audio-checkbox"
+                                    prop:checked=move || retain_audio.get()
+                                    on:change=move |ev| {
+                                        retain_audio.set(event_target_checked(&ev));
                                         persist_config();
                                     }
                                 />
