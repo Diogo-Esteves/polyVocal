@@ -72,6 +72,31 @@ pub async fn update_transcript(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_session_audio(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<Option<Vec<u8>>, String> {
+    let repository = SessionRepository::new(pool.inner().clone());
+    let audio_path = repository
+        .get(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|session| session.audio_path);
+
+    let Some(audio_path) = audio_path else {
+        return Ok(None);
+    };
+
+    match std::fs::read(&audio_path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) => {
+            warn!("failed to read retained audio file {audio_path}: {e}");
+            Ok(None)
+        }
+    }
+}
+
 /// Renders a session as plain text for the "export as TXT" (Phase 5) feature.
 fn format_session_txt(session: &Session) -> String {
     let mut out = format!("Session {}\nRecorded: {}\n", session.id, session.created_at);
