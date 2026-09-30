@@ -58,6 +58,13 @@ struct SearchSessionsArgs<'a> {
     query: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateTranscriptArgs<'a> {
+    id: &'a str,
+    transcript: &'a str,
+}
+
 /// Lists sessions with the given limit and offset.
 pub async fn list_sessions(limit: i64, offset: i64) -> Result<Vec<Session>, String> {
     let args = ListSessionsArgs {
@@ -95,4 +102,10 @@ pub async fn export_session_txt(id: &str) -> Result<Option<String>, String> {
 pub async fn export_session_srt(id: &str) -> Result<Option<String>, String> {
     let args = ExportSessionSrtArgs { id };
     tauri_sys::core::invoke_result::<Option<String>, String>("export_session_srt", args).await
+}
+
+/// Persists a manually-corrected transcript (#214).
+pub async fn update_transcript(id: &str, transcript: &str) -> Result<(), String> {
+    let args = UpdateTranscriptArgs { id, transcript };
+    tauri_sys::core::invoke_result::<(), String>("update_transcript", args).await
 }

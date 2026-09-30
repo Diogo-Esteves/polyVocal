@@ -230,6 +230,16 @@ impl SessionRepository {
         Ok(())
     }
 
+    pub async fn update_transcript(&self, id: &str, transcript: &str) -> Result<()> {
+        sqlx::query("UPDATE sessions SET transcript = ? WHERE id = ?")
+            .bind(transcript)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
     /// Deletes a session and its segments. There's no real foreign key on
     /// `segments.session_id` (SQLite enforces FKs only with
     /// `PRAGMA foreign_keys = ON`, per connection), so the cascade is done
@@ -383,6 +393,72 @@ mod tests {
             .expect("session should exist");
         assert_eq!(fetched.translation.as_deref(), Some("Olá"));
         assert_eq!(fetched.target_lang.as_deref(), Some("pt"));
+    }
+
+    #[tokio::test]
+    async fn test_update_transcript_persists_edited_transcript() {
+        let repository = SessionRepository::new(test_pool().await);
+        let session = Session::new("Original text".to_string(), Some("en".to_string()), 100);
+        repository
+            .save(&session)
+            .await
+            .expect("save should succeed");
+
+        repository
+            .update_transcript(&session.id, "Corrected text")
+            .await
+            .expect("update_transcript should succeed");
+
+        let fetched = repository
+            .get(&session.id)
+            .await
+            .expect("get should succeed")
+            .expect("session should exist");
+        assert_eq!(fetched.transcript, "Corrected text");
+    }
+
+    #[tokio::test]
+    async fn test_update_transcript_updates_fts5_search_index() {
+        let repository = SessionRepository::new(test_pool().await);
+        let session = Session::new(
+            "old unique word here".to_string(),
+            Some("en".to_string()),
+            100,
+        );
+        repository
+            .save(&session)
+            .await
+            .expect("save should succeed");
+
+        // Search finds the original text
+        let results = repository
+            .search("unique", 50)
+            .await
+            .expect("search should succeed");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, session.id);
+
+        // Update the transcript
+        repository
+            .update_transcript(&session.id, "new different words here")
+            .await
+            .expect("update_transcript should succeed");
+
+        // Search for old word finds nothing
+        let old_results = repository
+            .search("unique", 50)
+            .await
+            .expect("search should succeed");
+        assert!(old_results.is_empty());
+
+        // Search for new word finds the session
+        let new_results = repository
+            .search("different", 50)
+            .await
+            .expect("search should succeed");
+        assert_eq!(new_results.len(), 1);
+        assert_eq!(new_results[0].id, session.id);
+        assert_eq!(new_results[0].transcript, "new different words here");
     }
 
     #[tokio::test]

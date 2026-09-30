@@ -1017,6 +1017,19 @@ select {
   white-space: pre-wrap;
 }
 
+.session-detail-textarea {
+  min-height: 4rem;
+  font-size: var(--text-xl);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  resize: vertical;
+  color: inherit;
+}
+
 /* `[ Original | English ⌄ ]` — `../design/DESIGN.md` → *Key Screens ·
  * Session*: one tap translates the session in place. The right segment is a
  * plain `<select>` (matching `.language-target` on the record screen) rather
