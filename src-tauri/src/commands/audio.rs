@@ -1107,6 +1107,119 @@ async fn persist_and_emit_segment(
 }
 
 #[tauri::command]
+pub async fn retranscribe_session(
+    app: AppHandle,
+    pool: State<'_, SqlitePool>,
+    id: String,
+    model_size: ModelSize,
+) -> Result<(), String> {
+    let repository = SessionRepository::new(pool.inner().clone());
+    let session = repository
+        .get(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "session not found".to_string())?;
+    let audio_path = session
+        .audio_path
+        .ok_or_else(|| "this session has no retained audio to re-transcribe".to_string())?;
+
+    let models_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("models");
+    let manager = ModelManager::new(models_dir);
+    let whisper_path = manager.model_path(&model_size);
+    if !whisper_path.exists() {
+        return Err(format!(
+            "{} model not downloaded — download it in Settings first",
+            model_size.filename()
+        ));
+    }
+    let silero_path = manager.vad_model_path(&VadModel::Silero);
+    if !silero_path.exists() {
+        return Err("VAD model not downloaded — download it in Settings first".to_string());
+    }
+
+    let session_id_for_segments = id.clone();
+    let (transcript, language, segments) = tokio::task::spawn_blocking(
+        move || -> Result<(String, Option<String>, Vec<TranscriptSegment>), String> {
+            let mut reader = hound::WavReader::open(&audio_path).map_err(|e| e.to_string())?;
+            let spec = reader.spec();
+            if spec.sample_rate != 16_000 || spec.channels != 1 {
+                return Err(format!(
+                    "retained audio file has unexpected format: {}Hz/{}ch",
+                    spec.sample_rate, spec.channels
+                ));
+            }
+            let pcm: Vec<f32> = reader
+                .samples::<i16>()
+                .map(|s| s.map(|v| v as f32 / 32768.0))
+                .collect::<Result<_, _>>()
+                .map_err(|e| e.to_string())?;
+
+            let engine = TranscriptionEngine::load(whisper_path).map_err(|e| e.to_string())?;
+            let scorer = SileroVad::load(silero_path).map_err(|e| e.to_string())?;
+            let segmenter = SpeechSegmenter::new(
+                scorer,
+                VAD_THRESHOLD,
+                VAD_MIN_SILENCE_FRAMES,
+                VAD_MAX_SEGMENT_FRAMES,
+            );
+            let mut pipeline = RecordingPipeline::new(segmenter);
+            let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
+
+            let options = DecodeOptions {
+                strategy: DecodeStrategy::BeamSearch { beam_size: 5 },
+                ..DecodeOptions::default()
+            };
+
+            let mut closed_segments = Vec::new();
+            for frame in chunker.push(&pcm) {
+                if let Some(segment) = pipeline.push_frame(&frame).map_err(|e| e.to_string())? {
+                    closed_segments.push(segment);
+                }
+            }
+            if let Some(segment) = pipeline.flush() {
+                closed_segments.push(segment);
+            }
+
+            let mut transcript = String::new();
+            let mut language: Option<String> = None;
+            let mut segments = Vec::new();
+            for closed in closed_segments {
+                let result = engine
+                    .transcribe(&closed.samples, &options)
+                    .map_err(|e| e.to_string())?;
+                if !transcript.is_empty() && !result.text.is_empty() {
+                    transcript.push(' ');
+                }
+                transcript.push_str(result.text.trim());
+                language = Some(result.language.clone());
+                segments.push(TranscriptSegment::new(
+                    &session_id_for_segments,
+                    &result.text,
+                    Some(&result.language),
+                    closed.start_ms,
+                    closed.end_ms,
+                ));
+            }
+
+            Ok((transcript, language, segments))
+        },
+    )
+    .await
+    .map_err(|e| format!("re-transcription task panicked: {e}"))??;
+
+    repository
+        .replace_segments(&id, &transcript, language.as_deref(), &segments)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn stop_recording(
     state: State<'_, RecordingState>,
     pool: State<'_, SqlitePool>,

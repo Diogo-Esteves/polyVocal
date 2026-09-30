@@ -240,6 +240,57 @@ impl SessionRepository {
         Ok(())
     }
 
+    /// Replaces a session's segments and denormalised transcript/language
+    /// wholesale (#215, re-transcription) — the old segments are deleted, the
+    /// new ones inserted, and `sessions.transcript`/`language` updated, all in
+    /// one transaction so a session is never left with mismatched segments and
+    /// transcript. The FTS5 search index needs no extra handling — its AU
+    /// trigger fires on the `UPDATE sessions` below exactly as it does for any
+    /// other transcript edit.
+    pub async fn replace_segments(
+        &self,
+        id: &str,
+        transcript: &str,
+        language: Option<&str>,
+        segments: &[TranscriptSegment],
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM segments WHERE session_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
+        for segment in segments {
+            sqlx::query(
+                r#"
+                INSERT INTO segments (id, session_id, start_ms, end_ms, text, language)
+                VALUES (?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&segment.id)
+            .bind(&segment.session_id)
+            .bind(segment.start_ms)
+            .bind(segment.end_ms)
+            .bind(&segment.text)
+            .bind(&segment.language)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        sqlx::query(
+            "UPDATE sessions SET transcript = ?, language = COALESCE(?, language) WHERE id = ?",
+        )
+        .bind(transcript)
+        .bind(language)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Deletes a session and its segments. There's no real foreign key on
     /// `segments.session_id` (SQLite enforces FKs only with
     /// `PRAGMA foreign_keys = ON`, per connection), so the cascade is done
@@ -842,5 +893,96 @@ mod tests {
             .expect("search should succeed");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, session.id);
+    }
+
+    #[tokio::test]
+    async fn test_replace_segments_replaces_transcript_and_segments() {
+        let repository = SessionRepository::new(test_pool().await);
+        repository
+            .create_in_progress("session-1")
+            .await
+            .expect("create_in_progress should succeed");
+        repository
+            .append_segment(&TranscriptSegment::new(
+                "session-1",
+                "old text",
+                Some("en"),
+                0,
+                900,
+            ))
+            .await
+            .expect("append_segment should succeed");
+
+        let new_segments = vec![
+            TranscriptSegment::new("session-1", "new hello", Some("en"), 0, 500),
+            TranscriptSegment::new("session-1", "new world", Some("en"), 600, 1100),
+        ];
+        repository
+            .replace_segments(
+                "session-1",
+                "new hello new world",
+                Some("en"),
+                &new_segments,
+            )
+            .await
+            .expect("replace_segments should succeed");
+
+        let session = repository
+            .get("session-1")
+            .await
+            .expect("get should succeed")
+            .expect("session should exist");
+        assert_eq!(session.transcript, "new hello new world");
+        assert_eq!(session.language.as_deref(), Some("en"));
+
+        let segments = repository
+            .segments("session-1")
+            .await
+            .expect("segments should be queryable");
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].text, "new hello");
+        assert_eq!(segments[0].start_ms, 0);
+        assert_eq!(segments[0].end_ms, 500);
+        assert_eq!(segments[1].text, "new world");
+        assert_eq!(segments[1].start_ms, 600);
+        assert_eq!(segments[1].end_ms, 1100);
+    }
+
+    #[tokio::test]
+    async fn test_replace_segments_with_none_language_preserves_existing() {
+        let repository = SessionRepository::new(test_pool().await);
+        repository
+            .create_in_progress("session-1")
+            .await
+            .expect("create_in_progress should succeed");
+        repository
+            .append_segment(&TranscriptSegment::new(
+                "session-1",
+                "hello",
+                Some("pt"),
+                0,
+                900,
+            ))
+            .await
+            .expect("append_segment should succeed");
+
+        let new_segments = vec![TranscriptSegment::new(
+            "session-1",
+            "olá",
+            Some("pt"),
+            0,
+            900,
+        )];
+        repository
+            .replace_segments("session-1", "olá", None, &new_segments)
+            .await
+            .expect("replace_segments should succeed");
+
+        let session = repository
+            .get("session-1")
+            .await
+            .expect("get should succeed")
+            .expect("session should exist");
+        assert_eq!(session.language.as_deref(), Some("pt"));
     }
 }

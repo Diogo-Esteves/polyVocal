@@ -1,3 +1,5 @@
+use crate::commands::audio::retranscribe_session;
+use crate::commands::models::{ModelInfo, ModelSize, MODEL_PICKER_SIZES};
 use crate::commands::storage::{
     delete_session, export_session_srt, export_session_txt, get_session, get_session_audio,
     update_transcript, Session,
@@ -48,6 +50,7 @@ pub fn SessionDetailSheet(
     invoker: Signal<Option<web_sys::HtmlElement>>,
     sessions: RwSignal<Vec<Session>>,
     default_target_lang: RwSignal<String>,
+    models: RwSignal<Vec<ModelInfo>>,
     push_toast: Callback<String>,
 ) -> impl IntoView {
     let detail = RwSignal::new(None::<Session>);
@@ -55,6 +58,7 @@ pub fn SessionDetailSheet(
     let view_mode = RwSignal::new(SessionView::Original);
     let target_lang = RwSignal::new(default_target_lang.get_untracked());
     let translating = RwSignal::new(false);
+    let retranscribing = RwSignal::new(false);
     let menu_open = RwSignal::new(false);
     let pending_delete = RwSignal::new(false);
     let copied = RwSignal::new(false);
@@ -262,6 +266,29 @@ pub fn SessionDetailSheet(
         }
     };
 
+    let retranscribe_now = move |model_size: ModelSize| {
+        let Some(id) = session_detail_id.get_untracked() else {
+            return;
+        };
+        menu_open.set(false);
+        retranscribing.set(true);
+        spawn_local(async move {
+            match retranscribe_session(&id, model_size).await {
+                Ok(()) => match get_session(&id).await {
+                    Ok(Some(session)) => {
+                        transcript_text.set(session.transcript.clone());
+                        saved_transcript.set(session.transcript.clone());
+                        detail.set(Some(session));
+                    }
+                    Ok(None) => push_toast.run("Session not found.".to_string()),
+                    Err(e) => push_toast.run(e),
+                },
+                Err(e) => push_toast.run(e),
+            }
+            retranscribing.set(false);
+        });
+    };
+
     view! {
         <Sheet
             open=Signal::derive(move || session_detail_id.get().is_some())
@@ -288,6 +315,24 @@ pub fn SessionDetailSheet(
                         </button>
                         <button class="session-menu-item" on:click=export_txt>"Export TXT"</button>
                         <button class="session-menu-item" on:click=export_srt>"Export SRT"</button>
+                        {move || detail.get().filter(|s| s.audio_path.is_some()).map(|_| {
+                            models.get()
+                                .into_iter()
+                                .filter(|m| MODEL_PICKER_SIZES.contains(&m.size) && m.downloaded)
+                                .map(|model| {
+                                    let size = model.size;
+                                    view! {
+                                        <button
+                                            class="session-menu-item"
+                                            disabled=move || retranscribing.get()
+                                            on:click=move |_| retranscribe_now(size)
+                                        >
+                                            {format!("Re-transcribe at {}", size.label())}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()
+                        })}
                         <button
                             class="session-menu-item session-menu-delete"
                             class:is-confirming=move || pending_delete.get()
@@ -333,6 +378,9 @@ pub fn SessionDetailSheet(
                             </div>
                             {move || translating.get().then(|| view! {
                                 <p class="translate-status">"Running locally — usually a few seconds, longer the first time a language pair's model needs downloading."</p>
+                            })}
+                            {move || retranscribing.get().then(|| view! {
+                                <p class="translate-status">"Re-transcribing — this can take a while, longer at higher tiers."</p>
                             })}
                             <div class="translate-toggle" role="group" aria-label="Session view">
                                 <button
