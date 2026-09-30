@@ -17,7 +17,6 @@ pub struct Session {
     pub target_lang: Option<String>,
     pub status: String,
     /// Path to retained audio file (stored for future use in #213-#215).
-    #[allow(dead_code)]
     pub audio_path: Option<String>,
 }
 
@@ -65,6 +64,12 @@ struct UpdateTranscriptArgs<'a> {
     transcript: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GetSessionAudioArgs<'a> {
+    id: &'a str,
+}
+
 /// Lists sessions with the given limit and offset.
 pub async fn list_sessions(limit: i64, offset: i64) -> Result<Vec<Session>, String> {
     let args = ListSessionsArgs {
@@ -108,4 +113,10 @@ pub async fn export_session_srt(id: &str) -> Result<Option<String>, String> {
 pub async fn update_transcript(id: &str, transcript: &str) -> Result<(), String> {
     let args = UpdateTranscriptArgs { id, transcript };
     tauri_sys::core::invoke_result::<(), String>("update_transcript", args).await
+}
+
+/// Fetches a session's retained audio file as raw WAV bytes, if it has one (#213).
+pub async fn get_session_audio(id: &str) -> Result<Option<Vec<u8>>, String> {
+    let args = GetSessionAudioArgs { id };
+    tauri_sys::core::invoke_result::<Option<Vec<u8>>, String>("get_session_audio", args).await
 }

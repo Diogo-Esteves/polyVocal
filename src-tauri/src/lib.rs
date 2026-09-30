@@ -53,6 +53,7 @@ pub fn run() {
             commands::storage::get_session,
             commands::storage::delete_session,
             commands::storage::update_transcript,
+            commands::storage::get_session_audio,
             commands::storage::export_session_txt,
             commands::storage::export_session_srt,
             // Models

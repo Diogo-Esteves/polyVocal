@@ -1,5 +1,6 @@
 use crate::commands::storage::{
-    delete_session, export_session_srt, export_session_txt, get_session, update_transcript, Session,
+    delete_session, export_session_srt, export_session_txt, get_session, get_session_audio,
+    update_transcript, Session,
 };
 use crate::commands::translation::translate_text;
 use crate::format::{format_duration_label, format_session_datetime, TARGET_LANGUAGES};
@@ -9,6 +10,18 @@ use leptos::task::spawn_local;
 use std::time::Duration;
 
 use super::sheet::Sheet;
+
+/// Converts raw audio bytes (WAV format) into a Blob object URL for playback.
+fn bytes_to_audio_url(bytes: &[u8]) -> Option<String> {
+    let array = js_sys::Uint8Array::from(bytes);
+    let blob_parts = js_sys::Array::new();
+    blob_parts.push(&array.buffer());
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type("audio/wav");
+    let blob =
+        web_sys::Blob::new_with_buffer_source_sequence_and_options(&blob_parts, &options).ok()?;
+    web_sys::Url::create_object_url_with_blob(&blob).ok()
+}
 
 /// Which text the session detail sheet's `[ Original | English ⌄ ]` toggle
 /// (`../design/DESIGN.md` → *Key Screens · Session*) is currently showing.
@@ -47,6 +60,7 @@ pub fn SessionDetailSheet(
     let copied = RwSignal::new(false);
     let transcript_text = RwSignal::new(String::new());
     let saved_transcript = RwSignal::new(String::new());
+    let audio_url = RwSignal::new(None::<String>);
 
     // Refetches only on an actual id change (open with a new/different
     // session), not on every reactive rerun — same edge-detection shape as
@@ -55,6 +69,12 @@ pub fn SessionDetailSheet(
         let id = session_detail_id.get();
         let changed = id != prev.clone().unwrap_or(None);
         if changed {
+            // Revoke the previous object URL to avoid leaking memory when
+            // switching sessions or closing the sheet.
+            if let Some(old_url) = audio_url.get_untracked() {
+                let _ = web_sys::Url::revoke_object_url(&old_url);
+            }
+            audio_url.set(None);
             if let Some(id) = id.clone() {
                 detail.set(None);
                 view_mode.set(SessionView::Original);
@@ -76,6 +96,21 @@ pub fn SessionDetailSheet(
                             }
                             transcript_text.set(session.transcript.clone());
                             saved_transcript.set(session.transcript.clone());
+                            // Load audio if available (#213).
+                            if session.audio_path.is_some() {
+                                let session_id = session.id.clone();
+                                spawn_local(async move {
+                                    match get_session_audio(&session_id).await {
+                                        Ok(Some(bytes)) => {
+                                            if let Some(url) = bytes_to_audio_url(&bytes) {
+                                                audio_url.set(Some(url));
+                                            }
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => push_toast.run(e),
+                                    }
+                                });
+                            }
                             detail.set(Some(session));
                         }
                         Ok(None) => push_toast.run("Session not found.".to_string()),
@@ -279,6 +314,9 @@ pub fn SessionDetailSheet(
                     view! {
                         <div class="session-detail">
                             <p class="session-detail-meta">{language}" · "{duration}{status_note}</p>
+                            {move || audio_url.get().map(|url| view! {
+                                <audio class="session-detail-audio" controls src=url></audio>
+                            })}
                             <div class="session-detail-text">
                                 {move || match view_mode.get() {
                                     SessionView::Original => view! {

@@ -1030,6 +1030,10 @@ select {
   color: inherit;
 }
 
+.session-detail-audio {
+  width: 100%;
+}
+
 /* `[ Original | English ⌄ ]` — `../design/DESIGN.md` → *Key Screens ·
  * Session*: one tap translates the session in place. The right segment is a
  * plain `<select>` (matching `.language-target` on the record screen) rather
