@@ -58,6 +58,13 @@ pub struct StartRecordingArgs {
     pub device_id: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RetranscribeSessionArgs<'a> {
+    id: &'a str,
+    model_size: ModelSize,
+}
+
 /// Mirrors `audio::InputDevice` — a command return value, same reasoning as
 /// `ModelInfo` above.
 #[derive(Deserialize, Clone)]
@@ -81,4 +88,11 @@ pub async fn start_recording(device_id: Option<String>) -> Result<(), String> {
 /// Stops the current recording and returns the session ID.
 pub async fn stop_recording() -> Result<String, String> {
     tauri_sys::core::invoke_result::<String, String>("stop_recording", ()).await
+}
+
+/// Re-transcribes a session's retained audio at a different tier (#215),
+/// replacing its transcript and segments outright.
+pub async fn retranscribe_session(id: &str, model_size: ModelSize) -> Result<(), String> {
+    let args = RetranscribeSessionArgs { id, model_size };
+    tauri_sys::core::invoke_result::<(), String>("retranscribe_session", args).await
 }

@@ -43,6 +43,7 @@ pub fn run() {
             commands::audio::list_input_devices,
             commands::audio::start_recording,
             commands::audio::stop_recording,
+            commands::audio::retranscribe_session,
             // Translation
             commands::translation::translate_text,
             commands::translation::list_translation_models,

@@ -866,6 +866,7 @@ fn App() -> impl IntoView {
                 invoker=Signal::derive(move || session_detail_invoker.get())
                 sessions=sessions
                 default_target_lang=target_lang
+                models=models
                 push_toast=push_toast
             />
 
