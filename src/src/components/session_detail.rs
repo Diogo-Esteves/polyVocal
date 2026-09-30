@@ -1,5 +1,5 @@
 use crate::commands::storage::{
-    delete_session, export_session_srt, export_session_txt, get_session, Session,
+    delete_session, export_session_srt, export_session_txt, get_session, update_transcript, Session,
 };
 use crate::commands::translation::translate_text;
 use crate::format::{format_duration_label, format_session_datetime, TARGET_LANGUAGES};
@@ -45,6 +45,8 @@ pub fn SessionDetailSheet(
     let menu_open = RwSignal::new(false);
     let pending_delete = RwSignal::new(false);
     let copied = RwSignal::new(false);
+    let transcript_text = RwSignal::new(String::new());
+    let saved_transcript = RwSignal::new(String::new());
 
     // Refetches only on an actual id change (open with a new/different
     // session), not on every reactive rerun — same edge-detection shape as
@@ -72,6 +74,8 @@ pub fn SessionDetailSheet(
                             if let Some(lang) = session.target_lang.clone() {
                                 target_lang.set(lang);
                             }
+                            transcript_text.set(session.transcript.clone());
+                            saved_transcript.set(session.transcript.clone());
                             detail.set(Some(session));
                         }
                         Ok(None) => push_toast.run("Session not found.".to_string()),
@@ -116,6 +120,29 @@ pub fn SessionDetailSheet(
                 Err(e) => push_toast.run(e),
             }
             translating.set(false);
+        });
+    };
+
+    let save_transcript = move |_| {
+        let Some(id) = session_detail_id.get_untracked() else {
+            return;
+        };
+        let text = transcript_text.get_untracked();
+        if text == saved_transcript.get_untracked() {
+            return; // no edit made, nothing to save
+        }
+        spawn_local(async move {
+            match update_transcript(&id, &text).await {
+                Ok(()) => {
+                    saved_transcript.set(text.clone());
+                    detail.update(|maybe| {
+                        if let Some(session) = maybe {
+                            session.transcript = text;
+                        }
+                    });
+                }
+                Err(e) => push_toast.run(e),
+            }
         });
     };
 
@@ -243,7 +270,6 @@ pub fn SessionDetailSheet(
                 } else if let Some(session) = detail.get() {
                     let language = session.language.clone().unwrap_or_else(|| "—".to_string());
                     let duration = format_duration_label(session.duration_ms);
-                    let original_text = session.transcript.clone();
                     let translated_text = session.translation.clone().unwrap_or_default();
                     let status_note = if session.status != "complete" {
                         " · Interrupted".to_string()
@@ -255,8 +281,16 @@ pub fn SessionDetailSheet(
                             <p class="session-detail-meta">{language}" · "{duration}{status_note}</p>
                             <div class="session-detail-text">
                                 {move || match view_mode.get() {
-                                    SessionView::Original => original_text.clone(),
-                                    SessionView::Translated => translated_text.clone(),
+                                    SessionView::Original => view! {
+                                        <textarea
+                                            class="session-detail-textarea"
+                                            aria-label="Session transcript"
+                                            prop:value=move || transcript_text.get()
+                                            on:input=move |ev| transcript_text.set(event_target_value(&ev))
+                                            on:blur=save_transcript
+                                        />
+                                    }.into_any(),
+                                    SessionView::Translated => translated_text.clone().into_any(),
                                 }}
                             </div>
                             {move || translating.get().then(|| view! {

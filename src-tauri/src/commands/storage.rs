@@ -59,6 +59,19 @@ pub async fn delete_session(pool: State<'_, SqlitePool>, id: String) -> Result<(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn update_transcript(
+    pool: State<'_, SqlitePool>,
+    id: String,
+    transcript: String,
+) -> Result<(), String> {
+    let repository = SessionRepository::new(pool.inner().clone());
+    repository
+        .update_transcript(&id, &transcript)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Renders a session as plain text for the "export as TXT" (Phase 5) feature.
 fn format_session_txt(session: &Session) -> String {
     let mut out = format!("Session {}\nRecorded: {}\n", session.id, session.created_at);
