@@ -9,7 +9,8 @@ use crate::storage::repository::SessionRepository;
 use crate::transcription::calibration::{self, CalibrationResult};
 use crate::transcription::calibration_cache;
 use crate::transcription::engine::{
-    DecodeOptions, DecodeStrategy, TranscriptResult, TranscriptionEngine,
+    split_n_threads_for_concurrent_engines, DecodeOptions, DecodeStrategy, TranscriptResult,
+    TranscriptionEngine,
 };
 use crate::transcription::pipeline::{ClosedSegment, RecordingPipeline};
 use crate::transcription::session::TranscriptionSession;
@@ -217,14 +218,17 @@ impl Transcriber for EngineTranscriber {
 
 struct EngineWindowTranscriber {
     engine: Arc<TranscriptionEngine>,
+    n_threads: std::os::raw::c_int,
 }
 
 impl WindowTranscriber for EngineWindowTranscriber {
     async fn transcribe_window(&self, pcm: &[f32]) -> Result<String, String> {
         let engine = self.engine.clone();
         let pcm = pcm.to_vec();
+        let n_threads = self.n_threads;
         let options = DecodeOptions {
             strategy: DecodeStrategy::Greedy,
+            n_threads,
             ..DecodeOptions::default()
         };
         tokio::task::spawn_blocking(move || {
@@ -266,6 +270,7 @@ async fn worker_loop<T, F, Fut>(
     transcriber: &T,
     default_strategy: DecodeStrategy,
     source_lang: Option<String>,
+    n_threads: std::os::raw::c_int,
     mut session: TranscriptionSession,
     mut on_segment: F,
 ) -> TranscriptionSession
@@ -288,6 +293,7 @@ where
         let options = DecodeOptions {
             strategy,
             language: source_lang.clone(),
+            n_threads,
             ..DecodeOptions::default()
         };
 
@@ -492,6 +498,13 @@ async fn start_recording_inner(
         None
     };
 
+    // Split the decode-thread budget between the main engine and the
+    // streaming engine (if active) so neither independently claims up to
+    // the full default budget, avoiding oversubscription on low-core-count
+    // machines (see #175).
+    let (main_n_threads, streaming_n_threads) =
+        split_n_threads_for_concurrent_engines(streaming_engine.is_some());
+
     // Doesn't auto-download — VAD model must already be fetched via Settings,
     // same as the Whisper model above.
     let silero_path = manager.vad_model_path(&VadModel::Silero);
@@ -610,6 +623,7 @@ async fn start_recording_inner(
                     StreamingWindow::new(
                         EngineWindowTranscriber {
                             engine: engine.clone(),
+                            n_threads: streaming_n_threads,
                         },
                         0,
                     )
@@ -787,6 +801,7 @@ async fn start_recording_inner(
                 &transcriber,
                 default_strategy,
                 source_lang,
+                main_n_threads,
                 session,
                 |result, start_ms, end_ms| {
                     persist_and_emit_segment(
@@ -1604,13 +1619,14 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Records the `DecodeStrategy` and language it was called with (so tests can assert
-    /// degrade-before-drop and language-threading actually happened) and returns a scripted result
+    /// Records the `DecodeStrategy`, language, and n_threads it was called with (so tests can assert
+    /// degrade-before-drop, language-threading, and thread-threading actually happened) and returns a scripted result
     /// after an optional artificial delay (so overflow scenarios can be
     /// constructed deterministically).
     struct FakeTranscriber {
         strategies_seen: std::sync::Mutex<Vec<DecodeStrategy>>,
         languages_seen: std::sync::Mutex<Vec<Option<String>>>,
+        n_threads_seen: std::sync::Mutex<Vec<std::os::raw::c_int>>,
         delay: std::time::Duration,
     }
 
@@ -1619,6 +1635,7 @@ mod tests {
             Self {
                 strategies_seen: std::sync::Mutex::new(Vec::new()),
                 languages_seen: std::sync::Mutex::new(Vec::new()),
+                n_threads_seen: std::sync::Mutex::new(Vec::new()),
                 delay,
             }
         }
@@ -1635,6 +1652,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(options.language.clone());
+            self.n_threads_seen.lock().unwrap().push(options.n_threads);
             if !self.delay.is_zero() {
                 tokio::time::sleep(self.delay).await;
             }
@@ -1695,6 +1713,7 @@ mod tests {
             &transcriber,
             DecodeStrategy::Greedy,
             None,
+            crate::transcription::engine::default_n_threads(),
             TranscriptionSession::new(),
             |result, start_ms, end_ms| {
                 emitted.push((result.text.clone(), start_ms, end_ms));
@@ -1722,6 +1741,7 @@ mod tests {
             &transcriber,
             DecodeStrategy::BeamSearch { beam_size: 5 },
             None,
+            crate::transcription::engine::default_n_threads(),
             TranscriptionSession::new(),
             |_, _, _| async {},
         )
@@ -1748,6 +1768,7 @@ mod tests {
                 &transcriber,
                 DecodeStrategy::Greedy,
                 None,
+                crate::transcription::engine::default_n_threads(),
                 TranscriptionSession::new(),
                 |_, _, _| async {},
             )
@@ -1777,6 +1798,7 @@ mod tests {
             &transcriber,
             DecodeStrategy::Greedy,
             Some("pt".to_string()),
+            crate::transcription::engine::default_n_threads(),
             TranscriptionSession::new(),
             |_, _, _| async {},
         )
@@ -1785,5 +1807,29 @@ mod tests {
         let languages = transcriber.languages_seen.lock().unwrap().clone();
         assert_eq!(languages.len(), 1);
         assert_eq!(languages[0], Some("pt".to_string()));
+    }
+
+    #[tokio::test]
+    async fn worker_loop_threads_n_threads_through_decode_options() {
+        let (tx, rx) = mpsc::channel(4);
+        tx.send(closed_segment(4, 0)).await.unwrap();
+        drop(tx);
+
+        let transcriber = FakeTranscriber::new(std::time::Duration::ZERO);
+        let test_n_threads = 4;
+        worker_loop(
+            rx,
+            &transcriber,
+            DecodeStrategy::Greedy,
+            None,
+            test_n_threads,
+            TranscriptionSession::new(),
+            |_, _, _| async {},
+        )
+        .await;
+
+        let threads_seen = transcriber.n_threads_seen.lock().unwrap().clone();
+        assert_eq!(threads_seen.len(), 1);
+        assert_eq!(threads_seen[0], test_n_threads);
     }
 }

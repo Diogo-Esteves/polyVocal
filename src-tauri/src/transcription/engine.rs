@@ -55,6 +55,34 @@ pub fn default_n_threads() -> std::os::raw::c_int {
         .min(8) as std::os::raw::c_int
 }
 
+/// Splits the decode-thread budget (`default_n_threads()`) between two
+/// concurrently-running engines — a session's main transcription engine
+/// and its streaming-partials engine — rather than each independently
+/// claiming up to the full budget. Issue #175 measured the consequence of
+/// not doing this directly: two uncoordinated engines each claiming up to
+/// 8 threads blew RTF 3-5x past `RTF_KEEP_UP_THRESHOLD` on 4-8 core
+/// machines, because the OS has to time-slice far more decode threads
+/// than there are cores. The streaming engine (cheap Tiny/Greedy partials)
+/// gets a small reserved slice; the main engine (quality-critical, live
+/// segment transcription) gets the rest, so total demand across both
+/// never exceeds what one engine alone would request today.
+///
+/// When `streaming_active` is false, both engines aren't actually running
+/// concurrently, so this just returns the unsplit budget for both — the
+/// second value is simply unused by the caller in that case (no streaming
+/// engine exists to consume it).
+pub fn split_n_threads_for_concurrent_engines(
+    streaming_active: bool,
+) -> (std::os::raw::c_int, std::os::raw::c_int) {
+    let total = default_n_threads();
+    if !streaming_active {
+        return (total, total);
+    }
+    let streaming = (total / 4).max(1);
+    let main = (total - streaming).max(1);
+    (main, streaming)
+}
+
 /// Wrapper around a loaded whisper-rs model.
 #[derive(Debug)]
 pub struct TranscriptionEngine {
@@ -320,5 +348,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_split_n_threads_returns_unsplit_budget_when_streaming_inactive() {
+        let (main, streaming) = split_n_threads_for_concurrent_engines(false);
+        let total = default_n_threads();
+        assert_eq!(main, total);
+        assert_eq!(streaming, total);
+    }
+
+    #[test]
+    fn test_split_n_threads_returns_split_when_streaming_active() {
+        let (main, streaming) = split_n_threads_for_concurrent_engines(true);
+        let total = default_n_threads();
+        assert!(main >= 1, "main must be at least 1");
+        assert!(streaming >= 1, "streaming must be at least 1");
+        assert!(
+            main + streaming <= total + 1,
+            "main + streaming must not exceed total + 1 (rounding)"
+        );
+        assert!(main > streaming, "main must get the majority");
     }
 }
