@@ -53,6 +53,12 @@ struct ExportSessionSrtArgs<'a> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ExportSessionDocxArgs<'a> {
+    id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SearchSessionsArgs<'a> {
     query: &'a str,
 }
@@ -107,6 +113,12 @@ pub async fn export_session_txt(id: &str) -> Result<Option<String>, String> {
 pub async fn export_session_srt(id: &str) -> Result<Option<String>, String> {
     let args = ExportSessionSrtArgs { id };
     tauri_sys::core::invoke_result::<Option<String>, String>("export_session_srt", args).await
+}
+
+/// Exports a session as a DOCX document.
+pub async fn export_session_docx(id: &str) -> Result<Option<String>, String> {
+    let args = ExportSessionDocxArgs { id };
+    tauri_sys::core::invoke_result::<Option<String>, String>("export_session_docx", args).await
 }
 
 /// Persists a manually-corrected transcript (#214).

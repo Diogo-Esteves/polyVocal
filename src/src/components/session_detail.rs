@@ -1,8 +1,8 @@
 use crate::commands::audio::retranscribe_session;
 use crate::commands::models::{ModelInfo, ModelSize, MODEL_PICKER_SIZES};
 use crate::commands::storage::{
-    delete_session, export_session_srt, export_session_txt, get_session, get_session_audio,
-    update_transcript, Session,
+    delete_session, export_session_docx, export_session_srt, export_session_txt, get_session,
+    get_session_audio, update_transcript, Session,
 };
 use crate::commands::translation::translate_text;
 use crate::format::{format_duration_label, format_session_datetime, TARGET_LANGUAGES};
@@ -213,6 +213,20 @@ pub fn SessionDetailSheet(
         });
     };
 
+    let export_docx = move |_| {
+        menu_open.set(false);
+        let Some(id) = session_detail_id.get_untracked() else {
+            return;
+        };
+        spawn_local(async move {
+            match export_session_docx(&id).await {
+                Ok(Some(path)) => push_toast.run(format!("Exported to {path}")),
+                Ok(None) => {}
+                Err(e) => push_toast.run(e),
+            }
+        });
+    };
+
     // Copies whichever text the toggle is currently showing — original or
     // translated — since that's what the user is looking at. Leaves the menu
     // open through the "Copied!" swap (closing it immediately, as the other
@@ -315,6 +329,7 @@ pub fn SessionDetailSheet(
                         </button>
                         <button class="session-menu-item" on:click=export_txt>"Export TXT"</button>
                         <button class="session-menu-item" on:click=export_srt>"Export SRT"</button>
+                        <button class="session-menu-item" on:click=export_docx>"Export DOCX"</button>
                         {move || detail.get().filter(|s| s.audio_path.is_some()).map(|_| {
                             models.get()
                                 .into_iter()

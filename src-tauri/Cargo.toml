@@ -59,6 +59,9 @@ whisper-rs = "0.16"
 # runtime (transcription::calibration) as well as in tests.
 hound = "3.5.1"
 
+# DOCX writing — for session export (Phase 5)
+docx-rs = "0.4"
+
 # Storage — async SQLite
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono"] }
 
