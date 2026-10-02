@@ -57,6 +57,7 @@ pub fn run() {
             commands::storage::get_session_audio,
             commands::storage::export_session_txt,
             commands::storage::export_session_srt,
+            commands::storage::export_session_docx,
             // Models
             commands::models::list_models,
             commands::models::download_model,

@@ -1,6 +1,7 @@
 use crate::storage::models::{Session, TranscriptSegment};
 use crate::storage::repository::SessionRepository;
 use sqlx::SqlitePool;
+use std::io::Cursor;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 use tracing::warn;
@@ -248,6 +249,117 @@ pub async fn export_session_srt(
     Ok(Some(path.display().to_string()))
 }
 
+/// Renders a session as a DOCX (Word) document containing the session metadata,
+/// transcript, and translation (if any).
+fn format_session_docx(session: &Session) -> anyhow::Result<Vec<u8>> {
+    use docx_rs::{Docx, Paragraph, Run};
+
+    let mut docx = Docx::new();
+
+    // 1. Bold heading: "Session {id}"
+    let heading = Paragraph::new().add_run(
+        Run::new()
+            .add_text(format!("Session {}", session.id))
+            .bold(),
+    );
+    docx = docx.add_paragraph(heading);
+
+    // 2. Recorded: {created_at}
+    docx = docx.add_paragraph(
+        Paragraph::new().add_run(Run::new().add_text(format!("Recorded: {}", session.created_at))),
+    );
+
+    // 3. Language: {language or "unknown"}
+    let language = session.language.as_deref().unwrap_or("unknown");
+    docx = docx.add_paragraph(
+        Paragraph::new().add_run(Run::new().add_text(format!("Language: {language}"))),
+    );
+
+    // 4. Blank paragraph
+    docx = docx.add_paragraph(Paragraph::new());
+
+    // 5. Bold line: "Transcript:"
+    docx = docx.add_paragraph(Paragraph::new().add_run(Run::new().add_text("Transcript:").bold()));
+
+    // 6. Transcript text — split on newlines
+    for line in session.transcript.lines() {
+        docx = docx.add_paragraph(Paragraph::new().add_run(Run::new().add_text(line)));
+    }
+    // If transcript is empty or doesn't contain newlines, still add one paragraph
+    if session.transcript.is_empty() || !session.transcript.contains('\n') {
+        // Only add if we haven't already added via lines()
+        if session.transcript.is_empty() {
+            docx = docx.add_paragraph(Paragraph::new());
+        }
+    }
+
+    // 7. If translation exists: blank paragraph, bold line, translation text
+    if let Some(translation) = &session.translation {
+        docx = docx.add_paragraph(Paragraph::new());
+
+        let target = session.target_lang.as_deref().unwrap_or("unknown");
+        docx = docx.add_paragraph(
+            Paragraph::new().add_run(
+                Run::new()
+                    .add_text(format!("Translation ({target}):"))
+                    .bold(),
+            ),
+        );
+
+        for line in translation.lines() {
+            docx = docx.add_paragraph(Paragraph::new().add_run(Run::new().add_text(line)));
+        }
+        // If translation is empty, add one empty paragraph
+        if translation.is_empty() {
+            docx = docx.add_paragraph(Paragraph::new());
+        }
+    }
+
+    let mut cursor = Cursor::new(Vec::new());
+    docx.build().pack(&mut cursor)?;
+
+    Ok(cursor.into_inner())
+}
+
+/// Opens a native "Save As" dialog and writes the session's transcript (and
+/// translation, if any) as a DOCX document. Returns `Ok(None)` if the user
+/// cancels the dialog rather than treating cancellation as an error.
+#[tauri::command]
+pub async fn export_session_docx(
+    app: tauri::AppHandle,
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<Option<String>, String> {
+    let repository = SessionRepository::new(pool.inner().clone());
+    let session = repository
+        .get(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "session not found".to_string())?;
+
+    let content = format_session_docx(&session).map_err(|e| e.to_string())?;
+    let default_name = format!("session-{}.docx", session.id);
+
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_file_name(&default_name)
+            .add_filter("Word Document", &["docx"])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some(file_path) = chosen else {
+        return Ok(None);
+    };
+
+    let path = file_path.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    Ok(Some(path.display().to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +478,28 @@ mod tests {
     #[test]
     fn format_session_srt_with_no_segments_is_empty() {
         assert_eq!(format_session_srt(&[]), "");
+    }
+
+    #[test]
+    fn format_session_docx_without_translation() {
+        let session = sample_session();
+        let docx = format_session_docx(&session).expect("failed to format DOCX");
+
+        // DOCX is a ZIP container, so it should start with the ZIP magic number
+        assert!(docx.len() > 4);
+        assert_eq!(&docx[0..4], b"PK\x03\x04");
+    }
+
+    #[test]
+    fn format_session_docx_with_translation() {
+        let mut session = sample_session();
+        session.translation = Some("ola mundo".to_string());
+        session.target_lang = Some("pt".to_string());
+
+        let docx = format_session_docx(&session).expect("failed to format DOCX");
+
+        // DOCX is a ZIP container, so it should start with the ZIP magic number
+        assert!(docx.len() > 4);
+        assert_eq!(&docx[0..4], b"PK\x03\x04");
     }
 }
