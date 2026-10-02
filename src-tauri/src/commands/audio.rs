@@ -21,7 +21,7 @@ use crate::vad::{VAD_MAX_SEGMENT_FRAMES, VAD_MIN_SILENCE_FRAMES, VAD_THRESHOLD};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::future::Future;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, Mutex};
@@ -152,14 +152,19 @@ fn try_enqueue_segment(
 }
 
 /// Check whether a streaming window tick should be skipped because a segment
-/// is currently pending in the worker queue. Returns `true` if the queue is
-/// non-empty (at least one `ClosedSegment` is waiting), `false` if empty.
+/// is currently pending in the worker queue or actively being transcribed.
+/// Returns `true` if the queue is non-empty (at least one `ClosedSegment` is
+/// waiting) or if a segment is actively being transcribed, `false` otherwise.
 ///
 /// The tick must never block or contend with `worker_loop`'s segment queue:
-/// if a real segment is waiting to be transcribed, the partial-transcription
-/// pass should skip this cycle to let the final pass have priority.
-fn should_skip_streaming_tick(queue_tx: &mpsc::Sender<ClosedSegment>) -> bool {
-    queue_tx.capacity() < SEGMENT_QUEUE_CAPACITY
+/// if a real segment is waiting to be transcribed or is actively being decoded,
+/// the partial-transcription pass should skip this cycle to let the final pass
+/// have priority.
+fn should_skip_streaming_tick(
+    queue_tx: &mpsc::Sender<ClosedSegment>,
+    worker_busy: &AtomicBool,
+) -> bool {
+    queue_tx.capacity() < SEGMENT_QUEUE_CAPACITY || worker_busy.load(Ordering::Relaxed)
 }
 
 /// Returns the portion of `buffer` not yet fed to the streaming window (the
@@ -265,12 +270,14 @@ fn rms_level(samples: &[f32]) -> f32 {
 /// `start_recording`) picks it per-session based on measured RTF on this
 /// machine: `Greedy` if even that couldn't keep up within budget, or
 /// `BeamSearch` if there was RTF headroom for the better-quality decode.
+#[allow(clippy::too_many_arguments)]
 async fn worker_loop<T, F, Fut>(
     mut queue_rx: mpsc::Receiver<ClosedSegment>,
     transcriber: &T,
     default_strategy: DecodeStrategy,
     source_lang: Option<String>,
     n_threads: std::os::raw::c_int,
+    worker_busy: Arc<AtomicBool>,
     mut session: TranscriptionSession,
     mut on_segment: F,
 ) -> TranscriptionSession
@@ -297,7 +304,10 @@ where
             ..DecodeOptions::default()
         };
 
-        match transcriber.transcribe(samples, options).await {
+        worker_busy.store(true, Ordering::Relaxed);
+        let result = transcriber.transcribe(samples, options).await;
+        worker_busy.store(false, Ordering::Relaxed);
+        match result {
             Ok(result) => {
                 session.append(&result.text, &result.language);
                 on_segment(&result, start_ms, end_ms).await;
@@ -573,6 +583,8 @@ async fn start_recording_inner(
 
     let (queue_tx, queue_rx) = mpsc::channel::<ClosedSegment>(SEGMENT_QUEUE_CAPACITY);
 
+    let worker_busy = Arc::new(AtomicBool::new(false));
+
     // Check whether streaming_engine was successfully loaded before it's moved
     // into the producer task closure, so we can emit the calibration result
     // later with the accurate availability status.
@@ -581,6 +593,7 @@ async fn start_recording_inner(
     let producer_task: JoinHandle<RecordingStats> = tokio::spawn({
         let app = app.clone();
         let session_id = session_id.clone();
+        let worker_busy = worker_busy.clone();
         async move {
             // Initialize WAV writer if audio retention is enabled.
             let mut audio_writer: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>> =
@@ -679,7 +692,7 @@ async fn start_recording_inner(
                         ),
                     );
                     if last_streaming_tick.elapsed() >= next_tick_interval {
-                        if should_skip_streaming_tick(&queue_tx) {
+                        if should_skip_streaming_tick(&queue_tx, &worker_busy) {
                             last_streaming_tick = std::time::Instant::now();
                         } else if let Some(buffer) = pipeline.in_progress() {
                             if let Some(delta) =
@@ -795,6 +808,7 @@ async fn start_recording_inner(
             engine: engine.clone(),
         };
         let source_lang = config.source_lang.clone();
+        let worker_busy = worker_busy.clone();
         async move {
             worker_loop(
                 queue_rx,
@@ -802,6 +816,7 @@ async fn start_recording_inner(
                 default_strategy,
                 source_lang,
                 main_n_threads,
+                worker_busy,
                 session,
                 |result, start_ms, end_ms| {
                     persist_and_emit_segment(
@@ -1015,8 +1030,8 @@ mod streaming_window_tests {
         // should_skip_streaming_tick returns true so the tick is skipped.
         let (tx, _rx) = mpsc::channel::<ClosedSegment>(SEGMENT_QUEUE_CAPACITY);
 
-        // Queue is empty: should not skip
-        assert!(!should_skip_streaming_tick(&tx));
+        // Queue is empty and worker not busy: should not skip
+        assert!(!should_skip_streaming_tick(&tx, &AtomicBool::new(false)));
 
         // Send a segment; queue now has one pending, so should skip
         let segment = ClosedSegment {
@@ -1026,7 +1041,18 @@ mod streaming_window_tests {
         };
         tx.try_send(segment).expect("queue should have room");
 
-        assert!(should_skip_streaming_tick(&tx));
+        assert!(should_skip_streaming_tick(&tx, &AtomicBool::new(false)));
+    }
+
+    #[test]
+    fn test_should_skip_streaming_tick_when_worker_is_busy() {
+        // When the worker is actively transcribing a segment (worker_busy is true),
+        // should_skip_streaming_tick returns true so the tick is skipped, even if
+        // the queue has capacity.
+        let (tx, _rx) = mpsc::channel::<ClosedSegment>(SEGMENT_QUEUE_CAPACITY);
+
+        // Queue has capacity but worker is busy: should skip
+        assert!(should_skip_streaming_tick(&tx, &AtomicBool::new(true)));
     }
 
     #[test]
@@ -1714,6 +1740,7 @@ mod tests {
             DecodeStrategy::Greedy,
             None,
             crate::transcription::engine::default_n_threads(),
+            Arc::new(AtomicBool::new(false)),
             TranscriptionSession::new(),
             |result, start_ms, end_ms| {
                 emitted.push((result.text.clone(), start_ms, end_ms));
@@ -1742,6 +1769,7 @@ mod tests {
             DecodeStrategy::BeamSearch { beam_size: 5 },
             None,
             crate::transcription::engine::default_n_threads(),
+            Arc::new(AtomicBool::new(false)),
             TranscriptionSession::new(),
             |_, _, _| async {},
         )
@@ -1769,6 +1797,7 @@ mod tests {
                 DecodeStrategy::Greedy,
                 None,
                 crate::transcription::engine::default_n_threads(),
+                Arc::new(AtomicBool::new(false)),
                 TranscriptionSession::new(),
                 |_, _, _| async {},
             )
@@ -1799,6 +1828,7 @@ mod tests {
             DecodeStrategy::Greedy,
             Some("pt".to_string()),
             crate::transcription::engine::default_n_threads(),
+            Arc::new(AtomicBool::new(false)),
             TranscriptionSession::new(),
             |_, _, _| async {},
         )
@@ -1823,6 +1853,7 @@ mod tests {
             DecodeStrategy::Greedy,
             None,
             test_n_threads,
+            Arc::new(AtomicBool::new(false)),
             TranscriptionSession::new(),
             |_, _, _| async {},
         )
