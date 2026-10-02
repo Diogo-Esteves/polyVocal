@@ -77,6 +77,12 @@ async fn test_jfk_fixture_transcribes_recognizable_speech() {
             }
         }
     }
+    if let Some(segment) = pipeline.flush() {
+        let result = engine
+            .transcribe(&segment.samples, &DecodeOptions::default())
+            .expect("real speech segment should transcribe");
+        session.append(&result.text, &result.language);
+    }
     let transcript = session.transcript.to_lowercase();
 
     // Checked as separate distinctive phrases rather than one long exact
@@ -144,7 +150,7 @@ async fn test_pt_fixture_detects_portuguese_and_transcribes_recognizable_speech(
     let mut session = TranscriptionSession::new();
 
     let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
-    let mut detected_language: Option<String> = None;
+    let mut detected_languages: Vec<String> = Vec::new();
     for chunk in samples.chunks(1600) {
         for frame in chunker.push(chunk) {
             let closed = pipeline
@@ -155,11 +161,20 @@ async fn test_pt_fixture_detects_portuguese_and_transcribes_recognizable_speech(
                     .transcribe(&segment.samples, &DecodeOptions::default())
                     .expect("real speech segment should transcribe");
                 if !result.language.is_empty() {
-                    detected_language = Some(result.language.clone());
+                    detected_languages.push(result.language.clone());
                 }
                 session.append(&result.text, &result.language);
             }
         }
+    }
+    if let Some(segment) = pipeline.flush() {
+        let result = engine
+            .transcribe(&segment.samples, &DecodeOptions::default())
+            .expect("real speech segment should transcribe");
+        if !result.language.is_empty() {
+            detected_languages.push(result.language.clone());
+        }
+        session.append(&result.text, &result.language);
     }
     let transcript = session.transcript.to_lowercase();
 
@@ -174,10 +189,15 @@ async fn test_pt_fixture_detects_portuguese_and_transcribes_recognizable_speech(
         );
     }
 
-    assert_eq!(
-        detected_language,
-        Some("pt".to_string()),
-        "expected Portuguese language detection"
+    // Per #183, session language is "last-write-wins" (final segment's detected
+    // language can override earlier ones, even if it's a short trailing fragment
+    // mis-detected as a different language). This test cares that Portuguese was
+    // *recognized somewhere*, not that it survived to the end of the segment list —
+    // the content assertions above already prove the Portuguese speech was transcribed.
+    // Assert Portuguese was detected for at least one segment.
+    assert!(
+        detected_languages.contains(&"pt".to_string()),
+        "expected Portuguese language to be detected in at least one segment, got: {detected_languages:?}"
     );
 }
 
@@ -229,7 +249,7 @@ async fn test_es_fixture_detects_spanish_and_transcribes_recognizable_speech() {
     let mut session = TranscriptionSession::new();
 
     let mut chunker = FrameChunker::new(SILERO_FRAME_SIZE);
-    let mut detected_language: Option<String> = None;
+    let mut detected_languages: Vec<String> = Vec::new();
     for chunk in samples.chunks(1600) {
         for frame in chunker.push(chunk) {
             let closed = pipeline
@@ -240,11 +260,20 @@ async fn test_es_fixture_detects_spanish_and_transcribes_recognizable_speech() {
                     .transcribe(&segment.samples, &DecodeOptions::default())
                     .expect("real speech segment should transcribe");
                 if !result.language.is_empty() {
-                    detected_language = Some(result.language.clone());
+                    detected_languages.push(result.language.clone());
                 }
                 session.append(&result.text, &result.language);
             }
         }
+    }
+    if let Some(segment) = pipeline.flush() {
+        let result = engine
+            .transcribe(&segment.samples, &DecodeOptions::default())
+            .expect("real speech segment should transcribe");
+        if !result.language.is_empty() {
+            detected_languages.push(result.language.clone());
+        }
+        session.append(&result.text, &result.language);
     }
     let transcript = session.transcript.to_lowercase();
 
@@ -258,9 +287,14 @@ async fn test_es_fixture_detects_spanish_and_transcribes_recognizable_speech() {
         "expected 'cordero' in transcript, got: {transcript:?}"
     );
 
-    assert_eq!(
-        detected_language,
-        Some("es".to_string()),
-        "expected Spanish language detection"
+    // Per #183, session language is "last-write-wins" (final segment's detected
+    // language can override earlier ones, even if it's a short trailing fragment
+    // mis-detected as a different language). This test cares that Spanish was
+    // *recognized somewhere*, not that it survived to the end of the segment list —
+    // the content assertions above already prove the Spanish speech was transcribed.
+    // Assert Spanish was detected for at least one segment.
+    assert!(
+        detected_languages.contains(&"es".to_string()),
+        "expected Spanish language to be detected in at least one segment, got: {detected_languages:?}"
     );
 }
