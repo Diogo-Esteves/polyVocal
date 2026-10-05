@@ -33,14 +33,15 @@
 
 ## Phase 5 — Advanced Features
 - [ ] Speaker diarisation
-- [ ] Export formats (SRT, TXT, DOCX) *(TXT and SRT done — `export_session_txt` and
-      `export_session_srt` commands open a native save dialog via
+- [x] Export formats (SRT, TXT, DOCX) *(`export_session_txt`, `export_session_srt`,
+      and `export_session_docx` commands open a native save dialog via
       `tauri-plugin-dialog`/`tauri-plugin-fs`; TXT writes the transcript +
       translation, SRT writes the per-segment timestamps persisted in the
       `segments` table (`SessionRepository::segments`) as `HH:MM:SS,mmm`
-      cues. Both are triggered from "Export TXT"/"Export SRT" actions in a
-      session's `⋯` menu (session detail view, #74). DOCX not started — see
-      `src-tauri/src/commands/storage.rs`)*
+      cues, DOCX builds a formatted document via `docx_rs`
+      (`format_session_docx`). All three are triggered from "Export
+      TXT"/"Export SRT"/"Export DOCX" actions in a session's `⋯` menu
+      (session detail view, #74). See `src-tauri/src/commands/storage.rs`)*
 - [ ] Global hotkey — trigger recording from any app (opt-in)
 - [ ] System-wide dictation mode — global hotkey starts/stops capture from
       any focused app (not just polyVocal's own window) and injects the
